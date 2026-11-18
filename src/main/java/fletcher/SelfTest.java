@@ -172,12 +172,13 @@ public final class SelfTest {
 		// зачарование не слабеет, а состав перечитывается: 4 уровня пробивания уцелевают после смены
 		// предмета, но урон и инерция берутся из нового стека (иначе проверка была бы тавтологией)
 		boolean pierceKept = false;
+		Arrow probe = null;
 		try {
 			ItemStack first = FletcherArrows.build(
 				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET));
 			ItemStack second = FletcherArrows.build(
 				new ItemStack(Items.PAPER), new ItemStack(Items.BAMBOO), new ItemStack(Items.FLINT));
-			Arrow probe = new Arrow(server.overworld(), 0.0D, 128.0D, 0.0D, first, new ItemStack(Items.BOW));
+			probe = new Arrow(server.overworld(), 0.0D, 128.0D, 0.0D, first, new ItemStack(Items.BOW));
 			((AbstractArrowInvoker) probe).fletcher$setPierceLevel((byte) 4);
 			Method setPickup = AbstractArrow.class.getDeclaredMethod("setPickupItemStack", ItemStack.class);
 			setPickup.setAccessible(true);
@@ -185,9 +186,12 @@ public final class SelfTest {
 			pierceKept = probe.getPierceLevel() == 4
 				&& Math.abs(drag(probe) - FletcherArrows.dragOf(second)) < 1.0E-6F
 				&& Math.abs(damage(probe) - FletcherArrows.baseDamageOf(second)) < 1.0E-6D;
-			probe.discard();
 		} catch (ReflectiveOperationException e) {
 			LOGGER.error("Fletcher: проверка пробивания упала", e);
+		} finally {
+			if (probe != null) {
+				probe.discard();
+			}
 		}
 
 		// в слот результата положить нельзя, из заблокированного взять нельзя
@@ -307,7 +311,28 @@ public final class SelfTest {
 			drag, FletcherArrows.dragOf(stack), damage, FletcherArrows.baseDamageOf(stack),
 			pierce, FletcherArrows.pierceOf(stack));
 		arrow.discard();
-		return ok;
+
+		// стек переписали на обычную стрелу: наша база обязана сняться (иначе 3.0 висит навсегда),
+		// а ванильный урон от «Силы» лука — остаться, поэтому сброс только если мы сами его ставили
+		boolean reset = false;
+		Arrow plain = null;
+		try {
+			plain = new Arrow(level, 0.0D, 128.0D, 0.0D, stack, new ItemStack(Items.BOW));
+			Method setPickup = AbstractArrow.class.getDeclaredMethod("setPickupItemStack", ItemStack.class);
+			setPickup.setAccessible(true);
+			setPickup.invoke(plain, new ItemStack(Items.ARROW));
+			reset = Math.abs(damage(plain) - FletcherArrows.BASE_DAMAGE) < 1.0E-6D
+				&& Math.abs(drag(plain) - FletcherArrows.BASE_DRAG) < 1.0E-6F;
+		} catch (ReflectiveOperationException e) {
+			LOGGER.error("Fletcher: проверка сброса состава упала", e);
+		} finally {
+			if (plain != null) {
+				plain.discard();
+			}
+		}
+		LOGGER.info("Fletcher: сброс на обычную стрелу — drag={}, damage={} (ожид. ванильные {} / {})",
+			reset ? "0.99" : "?", reset ? "2.0" : "?", FletcherArrows.BASE_DRAG, FletcherArrows.BASE_DAMAGE);
+		return ok && reset;
 	}
 
 	/** NBT можно подделать командой или креативом: значения обязаны зажиматься. */
@@ -339,14 +364,34 @@ public final class SelfTest {
 			FletcherArrows.BASE_DRAG, FletcherArrows.BASE_DAMAGE);
 
 		// потолок чтения обязан совпадать с самым сильным честным набором, иначе лор обещает одно,
-		// а на выстреле получается другое
+		// а на выстреле получается другое. Сверяем сырое число из NBT: baseDamageOf уже обрезан,
+		// и дрейф таблицы вверх (алмаз 2.5 -> 3.5) по нему не поймать.
 		ItemStack best = FletcherArrows.build(
 			new ItemStack(Items.LEATHER), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.DIAMOND));
-		float bestDamage = FletcherArrows.baseDamageOf(best);
-		boolean bestReadable = Math.abs(bestDamage - 6.5F) < 1.0E-6F;
-		LOGGER.info("Fletcher: лучший набор damage={} (ожид. 6.5, без обрезки)", bestDamage);
+		float rawDamage = storedDamage(best);
+		float readDamage = FletcherArrows.baseDamageOf(best);
+		boolean bestReadable = Math.abs(rawDamage - 6.5F) < 1.0E-6F
+			&& Math.abs(readDamage - rawDamage) < 1.0E-6F;
+		LOGGER.info("Fletcher: лучший набор — в NBT damage={}, на чтении={} (ожид. 6.5 / 6.5, без обрезки)",
+			rawDamage, readDamage);
 
-		return clamped && nanSafe && infiniteSafe && bestReadable;
+		// NaN ловит не только миксин (у него свой guard > 0): сама dragOf обязана вернуть 0,
+		// иначе защиту можно снять и ничего не заметить
+		boolean nanDrag = FletcherArrows.dragOf(forgedArrow(Float.NaN, FletcherArrows.BASE_DAMAGE, 0)) == 0.0F
+			&& FletcherArrows.dragOf(
+				forgedArrow(Float.POSITIVE_INFINITY, FletcherArrows.BASE_DAMAGE, 0)) == 0.0F
+			&& FletcherArrows.dragOf(forgedArrow(-1.0F, FletcherArrows.BASE_DAMAGE, 0)) == 0.0F;
+		LOGGER.info("Fletcher: dragOf на NaN / Infinity / -1 — все 0: {}", nanDrag);
+
+		return clamped && nanSafe && infiniteSafe && bestReadable && nanDrag;
+	}
+
+	/** Сырое значение урона, записанное в {@code custom_data.fletcher} (без обрезки на чтении). */
+	private static float storedDamage(ItemStack stack) {
+		CustomData data = stack.get(DataComponents.CUSTOM_DATA);
+		return data == null ? 0.0F
+			: data.copyTag().getCompoundOrEmpty(FletcherArrows.NBT_ROOT)
+				.getFloatOr(FletcherArrows.KEY_DAMAGE, 0.0F);
 	}
 
 	/** Стрела с подделанным {@code custom_data.fletcher}. */

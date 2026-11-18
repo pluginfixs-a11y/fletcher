@@ -100,8 +100,10 @@ result. It covers the container (order, roles, junk, consume), the menu (41 slot
 hint visible with an empty cursor and hidden with a full one, wrong role refused, left/right click,
 stacking, shift-click routing, the 4-arrow issue, a second click with a busy cursor, crossbow pierce
 kept, shift-click drain, no ghost items), the click paths (`F` into the right and wrong slot, drag,
-`PICKUP_ALL`, `CLONE`, `THROW`, negative slot), a live `Arrow` (`drag=0.991 damage=3.0 pierce=1`), a forged tag clamped to `0.997 / 6.5 / 3` and
-NaN/Infinity falling back to the vanilla `0.99 / 2.0`.
+`PICKUP_ALL`, `CLONE`, `THROW`, negative slot), a live `Arrow` (`drag=0.991 damage=3.0 pierce=1`), a forged tag clamped to `0.997 / 6.5 / 3`, NaN/Infinity
+falling back to the vanilla `0.99 / 2.0`, the best set stored and read back as 6.5 (the ceiling guard reads
+the raw tag, so a growing part table cannot pass it silently), and a stack rewritten to a plain arrow
+dropping the fletcher damage back to 2.0.
 
 ## Install
 

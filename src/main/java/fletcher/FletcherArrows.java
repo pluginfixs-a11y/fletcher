@@ -208,7 +208,8 @@ public final class FletcherArrows {
 		}
 
 		float drag = Mth.clamp(BASE_DRAG + feather.drag() + shaft.drag() + head.drag(), MIN_DRAG, MAX_DRAG);
-		float damage = Math.max(MIN_DAMAGE, BASE_DAMAGE + feather.damage() + shaft.damage() + head.damage());
+		float damage = Math.min(MAX_READ_DAMAGE,
+			Math.max(MIN_DAMAGE, BASE_DAMAGE + feather.damage() + shaft.damage() + head.damage()));
 		int pierce = Mth.clamp(feather.pierce() + shaft.pierce() + head.pierce(), 0, MAX_PIERCE);
 
 		ItemStack out = new ItemStack(Items.ARROW, ARROWS_PER_CRAFT);
