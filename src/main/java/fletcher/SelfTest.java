@@ -169,17 +169,22 @@ public final class SelfTest {
 		boolean blocked = menu.getCarried().getCount() == FletcherArrows.ARROWS_PER_CRAFT
 			&& inventory.getItem(0).getCount() == 1;
 
-		// зачарование не слабеет: 4 уровня пробивания должны уцелеть после перечитывания предмета
+		// зачарование не слабеет, а состав перечитывается: 4 уровня пробивания уцелевают после смены
+		// предмета, но урон и инерция берутся из нового стека (иначе проверка была бы тавтологией)
 		boolean pierceKept = false;
 		try {
-			ItemStack stack = FletcherArrows.build(
+			ItemStack first = FletcherArrows.build(
 				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET));
-			Arrow probe = new Arrow(server.overworld(), 0.0D, 128.0D, 0.0D, stack, new ItemStack(Items.BOW));
+			ItemStack second = FletcherArrows.build(
+				new ItemStack(Items.PAPER), new ItemStack(Items.BAMBOO), new ItemStack(Items.FLINT));
+			Arrow probe = new Arrow(server.overworld(), 0.0D, 128.0D, 0.0D, first, new ItemStack(Items.BOW));
 			((AbstractArrowInvoker) probe).fletcher$setPierceLevel((byte) 4);
 			Method setPickup = AbstractArrow.class.getDeclaredMethod("setPickupItemStack", ItemStack.class);
 			setPickup.setAccessible(true);
-			setPickup.invoke(probe, stack.copy());
-			pierceKept = probe.getPierceLevel() == 4;
+			setPickup.invoke(probe, second);
+			pierceKept = probe.getPierceLevel() == 4
+				&& Math.abs(drag(probe) - FletcherArrows.dragOf(second)) < 1.0E-6F
+				&& Math.abs(damage(probe) - FletcherArrows.baseDamageOf(second)) < 1.0E-6D;
 			probe.discard();
 		} catch (ReflectiveOperationException e) {
 			LOGGER.error("Fletcher: проверка пробивания упала", e);
@@ -308,21 +313,51 @@ public final class SelfTest {
 	/** NBT можно подделать командой или креативом: значения обязаны зажиматься. */
 	private static boolean clampTest(MinecraftServer server) throws Exception {
 		ServerLevel level = server.overworld();
-		ItemStack forged = new ItemStack(Items.ARROW, 4);
-		CompoundTag tag = new CompoundTag();
-		tag.putFloat(FletcherArrows.KEY_DRAG, 5.0F);
-		tag.putFloat(FletcherArrows.KEY_DAMAGE, 1000.0F);
-		tag.putInt(FletcherArrows.KEY_PIERCE, 99);
-		CustomData.update(DataComponents.CUSTOM_DATA, forged, root -> root.put(FletcherArrows.NBT_ROOT, tag));
-
+		ItemStack forged = forgedArrow(5.0F, 1000.0F, 99);
 		Arrow arrow = new Arrow(level, 0.0D, 128.0D, 0.0D, forged, new ItemStack(Items.BOW));
-		boolean ok = Math.abs(drag(arrow) - 0.997F) < 1.0E-6F
-			&& Math.abs(damage(arrow) - 6.0D) < 1.0E-6D
+		boolean clamped = Math.abs(drag(arrow) - 0.997F) < 1.0E-6F
+			&& Math.abs(damage(arrow) - 6.5D) < 1.0E-6D
 			&& arrow.getPierceLevel() == 3;
-		LOGGER.info("Fletcher: подделка — drag={}, damage={}, pierce={} (ожид. 0.997 / 6.0 / 3)",
-			drag(arrow), damage(arrow), arrow.getPierceLevel());
 		arrow.discard();
-		return ok;
+		LOGGER.info("Fletcher: подделка — drag={}, damage={}, pierce={} (ожид. 0.997 / 6.5 / 3)",
+			drag(arrow), damage(arrow), arrow.getPierceLevel());
+
+		// NaN/Infinity проскакивают через Mth.clamp: сравнивать с ними бессмысленно, а baseDamage=NaN
+		// оставляет жертву с NaN-здоровьем. Такие значения обязаны падать к ванильным.
+		Arrow nan = new Arrow(level, 0.0D, 128.0D, 0.0D,
+			forgedArrow(Float.NaN, Float.NaN, 0), new ItemStack(Items.BOW));
+		boolean nanSafe = Math.abs(drag(nan) - FletcherArrows.BASE_DRAG) < 1.0E-6F
+			&& Math.abs(damage(nan) - FletcherArrows.BASE_DAMAGE) < 1.0E-6D;
+		nan.discard();
+		Arrow infinite = new Arrow(level, 0.0D, 128.0D, 0.0D,
+			forgedArrow(Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 0), new ItemStack(Items.BOW));
+		boolean infiniteSafe = Math.abs(drag(infinite) - FletcherArrows.BASE_DRAG) < 1.0E-6F
+			&& Math.abs(damage(infinite) - FletcherArrows.BASE_DAMAGE) < 1.0E-6D;
+		infinite.discard();
+		LOGGER.info("Fletcher: NaN — drag={}, damage={}; Infinity — drag={}, damage={} (ожид. ванильные {}, {})",
+			drag(nan), damage(nan), drag(infinite), damage(infinite),
+			FletcherArrows.BASE_DRAG, FletcherArrows.BASE_DAMAGE);
+
+		// потолок чтения обязан совпадать с самым сильным честным набором, иначе лор обещает одно,
+		// а на выстреле получается другое
+		ItemStack best = FletcherArrows.build(
+			new ItemStack(Items.LEATHER), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.DIAMOND));
+		float bestDamage = FletcherArrows.baseDamageOf(best);
+		boolean bestReadable = Math.abs(bestDamage - 6.5F) < 1.0E-6F;
+		LOGGER.info("Fletcher: лучший набор damage={} (ожид. 6.5, без обрезки)", bestDamage);
+
+		return clamped && nanSafe && infiniteSafe && bestReadable;
+	}
+
+	/** Стрела с подделанным {@code custom_data.fletcher}. */
+	private static ItemStack forgedArrow(float drag, float damage, int pierce) {
+		ItemStack stack = new ItemStack(Items.ARROW, 4);
+		CompoundTag tag = new CompoundTag();
+		tag.putFloat(FletcherArrows.KEY_DRAG, drag);
+		tag.putFloat(FletcherArrows.KEY_DAMAGE, damage);
+		tag.putInt(FletcherArrows.KEY_PIERCE, pierce);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, root -> root.put(FletcherArrows.NBT_ROOT, tag));
+		return stack;
 	}
 
 	private static float drag(AbstractArrow arrow) throws ReflectiveOperationException {

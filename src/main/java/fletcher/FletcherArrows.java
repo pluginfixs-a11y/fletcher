@@ -52,8 +52,13 @@ public final class FletcherArrows {
 	private static final float MIN_DRAG = 0.975F;
 	private static final float MAX_DRAG = 0.997F;
 	private static final int MAX_PIERCE = 3;
-	/** Потолок для чтения из NBT: наш максимум 4.5, запас на правки таблиц. */
-	private static final float MAX_READ_DAMAGE = 6.0F;
+	private static final float MIN_DAMAGE = 0.5F;
+	/**
+	 * Потолок для чтения из NBT: ровно столько даёт лучший набор (кожа + огненный стержень + алмаз =
+	 * 2.0 + 1.0 + 1.0 + 2.5). Меньше нельзя — честная стрела обрезалась бы на выстреле, больше нельзя —
+	 * подделка снова стала бы ваншотом. Сверяется в самопроверке, чтобы не разъехалось с таблицами.
+	 */
+	private static final float MAX_READ_DAMAGE = 6.5F;
 
 	private static final Map<Item, Part> FEATHERS = new HashMap<>();
 	private static final Map<Item, Part> SHAFTS = new HashMap<>();
@@ -203,7 +208,7 @@ public final class FletcherArrows {
 		}
 
 		float drag = Mth.clamp(BASE_DRAG + feather.drag() + shaft.drag() + head.drag(), MIN_DRAG, MAX_DRAG);
-		float damage = Math.max(0.5F, BASE_DAMAGE + feather.damage() + shaft.damage() + head.damage());
+		float damage = Math.max(MIN_DAMAGE, BASE_DAMAGE + feather.damage() + shaft.damage() + head.damage());
 		int pierce = Mth.clamp(feather.pierce() + shaft.pierce() + head.pierce(), 0, MAX_PIERCE);
 
 		ItemStack out = new ItemStack(Items.ARROW, ARROWS_PER_CRAFT);
@@ -234,7 +239,12 @@ public final class FletcherArrows {
 			return 0.0F;
 		}
 		float drag = tag.getFloatOr(KEY_DRAG, 0.0F);
-		return drag <= 0.0F ? 0.0F : Mth.clamp(drag, MIN_DRAG, MAX_DRAG);
+		// NaN проскочил бы и через clamp (сравнения с ним ложны), а инерция-NaN — это стрела,
+		// которая никогда не замедляется; поэтому нечисловые значения считаем отсутствующими
+		if (!Float.isFinite(drag) || drag <= 0.0F) {
+			return 0.0F;
+		}
+		return Mth.clamp(drag, MIN_DRAG, MAX_DRAG);
 	}
 
 	/** Абсолютный базовый урон стрелы; у ванильной — {@link #BASE_DAMAGE}. */
@@ -243,7 +253,12 @@ public final class FletcherArrows {
 		if (tag == null) {
 			return BASE_DAMAGE;
 		}
-		return Mth.clamp(tag.getFloatOr(KEY_DAMAGE, BASE_DAMAGE), 0.5F, MAX_READ_DAMAGE);
+		float damage = tag.getFloatOr(KEY_DAMAGE, BASE_DAMAGE);
+		// NaN/Infinity из NBT иначе доезжают до setBaseDamage: у жертвы становится NaN здоровье
+		if (!Float.isFinite(damage)) {
+			return BASE_DAMAGE;
+		}
+		return Mth.clamp(damage, MIN_DAMAGE, MAX_READ_DAMAGE);
 	}
 
 	public static int pierceOf(ItemStack arrow) {

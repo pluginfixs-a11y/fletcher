@@ -75,9 +75,12 @@ component copied a tag each time. Crossbow Piercing is never weakened (`max`, no
 client does not read these values, it only interpolates the position the server sends, so a forged
 arrow can visually lag the real hitbox — the price of server-only.
 
-Numbers read from NBT are clamped (`drag` 0.975..0.997, damage 0.5..6.0, piercing 0..3): a tagged
+Numbers read from NBT are clamped (`drag` 0.975..0.997, damage 0.5..6.5, piercing 0..3): a tagged
 arrow can arrive from creative, `/give` or another mod, and without clamping any such item would
-grant infinite range and a one-shot kill.
+grant infinite range and a one-shot kill. NaN and Infinity fall back to the vanilla values —
+`Mth.clamp` passes them through (every comparison with NaN is false) and `setBaseDamage(NaN)`
+leaves the victim with NaN health. The 6.5 ceiling is exactly the best honest set (leather + blaze
+rod + diamond); the self-test checks it so the lore never promises more than the shot delivers.
 
 ## No dupes
 
@@ -97,8 +100,8 @@ result. It covers the container (order, roles, junk, consume), the menu (41 slot
 hint visible with an empty cursor and hidden with a full one, wrong role refused, left/right click,
 stacking, shift-click routing, the 4-arrow issue, a second click with a busy cursor, crossbow pierce
 kept, shift-click drain, no ghost items), the click paths (`F` into the right and wrong slot, drag,
-`PICKUP_ALL`, `CLONE`, `THROW`, negative slot), a live `Arrow` (`drag=0.991 damage=3.0 pierce=1`) and
-a forged tag clamped to `0.997 / 6.0 / 3`.
+`PICKUP_ALL`, `CLONE`, `THROW`, negative slot), a live `Arrow` (`drag=0.991 damage=3.0 pierce=1`), a forged tag clamped to `0.997 / 6.5 / 3` and
+NaN/Infinity falling back to the vanilla `0.99 / 2.0`.
 
 ## Install
 
