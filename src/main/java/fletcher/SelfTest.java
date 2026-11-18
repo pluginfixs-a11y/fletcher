@@ -1,0 +1,343 @@
+package fletcher;
+
+import fletcher.mixin.AbstractArrowInvoker;
+import net.fabricmc.fabric.api.entity.FakePlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
+import net.minecraft.world.entity.projectile.arrow.Arrow;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.CustomData;
+import org.slf4j.Logger;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+/**
+ * Самопроверка запускается только с {@code -Dfletcher.selftest} на тестовом сервере.
+ * <p>
+ * Игра в одиночку здесь не проверяется (нужен живой игрок), но проверяется главное: что миксин
+ * реально применился к загруженному классу {@code AbstractArrow} (а не «собрался и молчит»),
+ * что рецепт не зависит от порядка слотов и что все известные пути дюпа закрыты.
+ * <p>
+ * Тесты кликов идут через {@code menu.clicked(...)} — это ровно та точка, куда попадает пакет
+ * клиента ({@code ServerGamePacketListenerImpl#handleContainerClick}), поэтому проверяются
+ * настоящие ванильные ветки {@code doClick}, а не наши представления о них.
+ */
+public final class SelfTest {
+	private static final Logger LOGGER = FletcherMod.LOGGER;
+
+	private SelfTest() {
+	}
+
+	public static void run(MinecraftServer server) {
+		boolean ok = true;
+		try {
+			ok &= containerTest();
+			ok &= menuTest(server);
+			ok &= clickPathsTest(server);
+			ok &= arrowTest(server);
+			ok &= clampTest(server);
+		} catch (Throwable t) {
+			LOGGER.error("Fletcher: самопроверка упала", t);
+			ok = false;
+		}
+		LOGGER.info("Fletcher: самопроверка — {}", ok ? "OK" : "ПРОВАЛ");
+		if (!ok) {
+			throw new IllegalStateException("Fletcher: самопроверка не прошла");
+		}
+		// тестовый прогон не должен висеть: гасим сервер сразу после отчёта
+		Thread stopper = new Thread(() -> server.halt(false), "fletcher-selftest-stop");
+		stopper.setDaemon(true);
+		stopper.start();
+	}
+
+	private static FakePlayer freshPlayer(MinecraftServer server) {
+		FakePlayer player = FakePlayer.get(server.overworld());
+		player.getInventory().clearContent();
+		return player;
+	}
+
+	private static boolean containerTest() {
+		// порядок жёсткий: 0 — оперение, 1 — древко, 2 — наконечник
+		FletcherInventory inventory = new FletcherInventory();
+		inventory.setItem(0, new ItemStack(Items.FEATHER, 3));
+		inventory.setItem(1, new ItemStack(Items.STICK, 3));
+		inventory.setItem(2, new ItemStack(Items.IRON_NUGGET, 3));
+
+		ItemStack output = inventory.getItem(FletcherInventory.SLOT_OUTPUT);
+		boolean built = !output.isEmpty() && output.getCount() == FletcherArrows.ARROWS_PER_CRAFT;
+		inventory.consumeInputs();
+		boolean consumed = inventory.getItem(0).getCount() == 2
+			&& inventory.getItem(1).getCount() == 2
+			&& inventory.getItem(2).getCount() == 2
+			&& !inventory.getItem(FletcherInventory.SLOT_OUTPUT).isEmpty();
+
+		// обратный порядок — не рецепт
+		FletcherInventory wrong = new FletcherInventory();
+		wrong.setItem(0, new ItemStack(Items.STICK));
+		wrong.setItem(1, new ItemStack(Items.FEATHER));
+		wrong.setItem(2, new ItemStack(Items.IRON_NUGGET));
+		boolean wrongOrder = wrong.getItem(FletcherInventory.SLOT_OUTPUT).isEmpty();
+
+		// дубль роли и мусор тоже не дают результата
+		FletcherInventory junk = new FletcherInventory();
+		junk.setItem(0, new ItemStack(Items.FEATHER));
+		junk.setItem(1, new ItemStack(Items.FEATHER));
+		junk.setItem(2, new ItemStack(Items.FLINT));
+		boolean junkIgnored = junk.getItem(FletcherInventory.SLOT_OUTPUT).isEmpty();
+
+		// слот не принимает чужую роль
+		boolean filter = inventory.canPlaceItem(0, new ItemStack(Items.FEATHER))
+			&& !inventory.canPlaceItem(0, new ItemStack(Items.STICK))
+			&& !inventory.canPlaceItem(1, new ItemStack(Items.IRON_NUGGET))
+			&& !inventory.canPlaceItem(2, new ItemStack(Items.FEATHER));
+
+		LOGGER.info("Fletcher: контейнер — результат {}, расход {}, порядок {}, мусор {}, роли {}",
+			ok(built), ok(consumed), ok(wrongOrder), ok(junkIgnored), ok(filter));
+		return built && consumed && wrongOrder && junkIgnored && filter;
+	}
+
+	private static boolean menuTest(MinecraftServer server) {
+		FakePlayer player = freshPlayer(server);
+		FletcherInventory inventory = new FletcherInventory();
+		FletcherMenu menu = new FletcherMenu(0, player.getInventory(), inventory, BlockPos.ZERO);
+
+		boolean slots = menu.slots.size() == 41;
+
+		// подсказки по ролям: слот 0 — оперение, 1 — древко, 2 — наконечник
+		boolean preview = !menu.slots.get(0).getItem().isEmpty()
+			&& FletcherArrows.roleOf(menu.slots.get(0).getItem()) == FletcherArrows.Role.FEATHER
+			&& FletcherArrows.roleOf(menu.slots.get(1).getItem()) == FletcherArrows.Role.SHAFT
+			&& FletcherArrows.roleOf(menu.slots.get(2).getItem()) == FletcherArrows.Role.HEAD
+			&& inventory.getItem(0).isEmpty();
+
+		// подсказка прячется, когда в руке предмет
+		menu.setCarried(new ItemStack(Items.FEATHER, 2));
+		boolean previewHidden = menu.slots.get(0).getItem().isEmpty() && inventory.getItem(0).isEmpty();
+
+		// чужую роль слот не принимает: перо не ложится в слот древка
+		menu.setCarried(new ItemStack(Items.FEATHER, 1));
+		menu.clicked(1, 0, ContainerInput.PICKUP, player);
+		boolean wrongRole = inventory.getItem(1).isEmpty() && menu.getCarried().getCount() == 1;
+		menu.setCarried(ItemStack.EMPTY);
+
+		// левая кладка: ваниль сама зовёт safeInsert и пишет в контейнер, подсказку не трогает
+		menu.setCarried(new ItemStack(Items.FEATHER, 2));
+		menu.clicked(0, 0, ContainerInput.PICKUP, player);
+		boolean placed = inventory.getItem(0).getCount() == 2
+			&& menu.getCarried().isEmpty()
+			&& inventory.getPreview(0).isEmpty();
+
+		// правая кладка: один предмет, остаток остаётся в руке и доливается левой
+		menu.setCarried(new ItemStack(Items.STICK, 2));
+		menu.clicked(1, 1, ContainerInput.PICKUP, player);
+		boolean placedOne = inventory.getItem(1).getCount() == 1 && menu.getCarried().getCount() == 1;
+		menu.clicked(1, 0, ContainerInput.PICKUP, player);
+		boolean merged = inventory.getItem(1).getCount() == 2 && menu.getCarried().isEmpty();
+
+		// shift-click из инвентаря сам находит свободный слот материала (меню 6 = инвентарь 10)
+		player.getInventory().setItem(10, new ItemStack(Items.IRON_NUGGET, 2));
+		menu.quickMoveStack(player, 6);
+		boolean autoPlaced = player.getInventory().getItem(10).isEmpty()
+			&& inventory.getItem(2).getCount() == 2;
+
+		// комплект собран, но в руке палка — выдача не должна пройти
+		menu.setCarried(new ItemStack(Items.STICK, 2));
+		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.PICKUP, player);
+		boolean busyHand = menu.getCarried().getCount() == 2 && !inventory.getItem(0).isEmpty();
+
+		// пустая рука: 4 стрелы на курсор, списан один комплект
+		menu.setCarried(ItemStack.EMPTY);
+		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.PICKUP, player);
+		ItemStack carried = menu.getCarried();
+		boolean took = !carried.isEmpty()
+			&& carried.getItem() == Items.ARROW
+			&& carried.getCount() == FletcherArrows.ARROWS_PER_CRAFT
+			&& inventory.getItem(0).getCount() == 1
+			&& inventory.getItem(1).getCount() == 1
+			&& inventory.getItem(2).getCount() == 1;
+
+		// второй клик с занятой рукой: ни выдачи, ни расхода
+		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.PICKUP, player);
+		boolean blocked = menu.getCarried().getCount() == FletcherArrows.ARROWS_PER_CRAFT
+			&& inventory.getItem(0).getCount() == 1;
+
+		// зачарование не слабеет: 4 уровня пробивания должны уцелеть после перечитывания предмета
+		boolean pierceKept = false;
+		try {
+			ItemStack stack = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET));
+			Arrow probe = new Arrow(server.overworld(), 0.0D, 128.0D, 0.0D, stack, new ItemStack(Items.BOW));
+			((AbstractArrowInvoker) probe).fletcher$setPierceLevel((byte) 4);
+			Method setPickup = AbstractArrow.class.getDeclaredMethod("setPickupItemStack", ItemStack.class);
+			setPickup.setAccessible(true);
+			setPickup.invoke(probe, stack.copy());
+			pierceKept = probe.getPierceLevel() == 4;
+			probe.discard();
+		} catch (ReflectiveOperationException e) {
+			LOGGER.error("Fletcher: проверка пробивания упала", e);
+		}
+
+		// в слот результата положить нельзя, из заблокированного взять нельзя
+		boolean locked = !menu.slots.get(FletcherInventory.SLOT_OUTPUT).mayPlace(new ItemStack(Items.ARROW))
+			&& !menu.slots.get(FletcherInventory.SLOT_LOCKED).mayPickup(player);
+
+		// shift-click забирает остаток и гасит результат; освободившиеся слоты снова с подсказкой
+		menu.setCarried(ItemStack.EMPTY);
+		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.QUICK_MOVE, player);
+		boolean drained = inventory.getItem(0).isEmpty()
+			&& inventory.getItem(1).isEmpty()
+			&& inventory.getItem(2).isEmpty()
+			&& inventory.getItem(FletcherInventory.SLOT_OUTPUT).isEmpty()
+			&& !menu.slots.get(0).getItem().isEmpty();
+		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.PICKUP, player);
+		boolean noGhostOutput = menu.getCarried().isEmpty();
+
+		boolean ok = slots && preview && previewHidden && wrongRole && placed && placedOne && merged && autoPlaced
+			&& busyHand && took && blocked && pierceKept && locked && drained && noGhostOutput;
+		LOGGER.info("Fletcher: меню — слоты {}, подсказка {}, спрятана {}, чужая роль {}, кладка {}, правая {}, долив {}, "
+				+ "автораскладка {}, занятая рука {}, выдача {}, блок {}, пробивание-не-слабеет {}, "
+				+ "блокировка {}, расход {}, без пустышки {}",
+			ok(slots), ok(preview), ok(previewHidden), ok(wrongRole), ok(placed), ok(placedOne), ok(merged),
+			ok(autoPlaced), ok(busyHand), ok(took), ok(blocked), ok(pierceKept),
+			ok(locked), ok(drained), ok(noGhostOutput));
+		return ok;
+	}
+
+	/** Пути, которыми ваниль умеет дюпать или падать: драг, двойной клик, CLONE, THROW, отрицательный слот. */
+	private static boolean clickPathsTest(MinecraftServer server) {
+		FakePlayer player = freshPlayer(server);
+
+		// F/хотбар в слот с подсказкой: кость — древко, ложится только в слот 1
+		FletcherInventory swapInv = new FletcherInventory();
+		FletcherMenu swapMenu = new FletcherMenu(0, player.getInventory(), swapInv, BlockPos.ZERO);
+		player.getInventory().setItem(0, new ItemStack(Items.BONE, 5));
+		swapMenu.clicked(1, 0, ContainerInput.SWAP, player);
+		boolean swapped = swapInv.getItem(1).getCount() == 5 && player.getInventory().getItem(0).isEmpty();
+		player.getInventory().setItem(0, new ItemStack(Items.BONE, 3));
+		swapMenu.clicked(2, 0, ContainerInput.SWAP, player);
+		boolean swapRejected = swapInv.getItem(2).isEmpty() && player.getInventory().getItem(0).getCount() == 3;
+
+		// драг по двум слотам: перья принимает только слот 0, чужой слот их не берёт
+		FletcherInventory dragInv = new FletcherInventory();
+		FletcherMenu dragMenu = new FletcherMenu(1, player.getInventory(), dragInv, BlockPos.ZERO);
+		dragMenu.setCarried(new ItemStack(Items.FEATHER, 5));
+		dragMenu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(0, 0), ContainerInput.QUICK_CRAFT, player);
+		dragMenu.clicked(0, AbstractContainerMenu.getQuickcraftMask(1, 0), ContainerInput.QUICK_CRAFT, player);
+		dragMenu.clicked(1, AbstractContainerMenu.getQuickcraftMask(1, 0), ContainerInput.QUICK_CRAFT, player);
+		dragMenu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(2, 0), ContainerInput.QUICK_CRAFT, player);
+		boolean drag = dragInv.getItem(0).getCount() == 5
+			&& dragInv.getItem(1).isEmpty()
+			&& dragMenu.getCarried().isEmpty();
+
+		// драг только по чужому слоту: ничего не происходит
+		dragMenu.setCarried(new ItemStack(Items.FEATHER, 5));
+		dragMenu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(0, 0), ContainerInput.QUICK_CRAFT, player);
+		dragMenu.clicked(1, AbstractContainerMenu.getQuickcraftMask(1, 0), ContainerInput.QUICK_CRAFT, player);
+		dragMenu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(2, 0), ContainerInput.QUICK_CRAFT, player);
+		boolean dragRejected = dragInv.getItem(1).isEmpty() && dragMenu.getCarried().getCount() == 5;
+
+		// подсказка, двойной клик, CLONE, Q и отрицательный слот — на чистом столе
+		FletcherInventory inventory = new FletcherInventory();
+		FletcherMenu menu = new FletcherMenu(2, player.getInventory(), inventory, BlockPos.ZERO);
+		inventory.setPreview(0, new ItemStack(Items.FEATHER));
+
+		// двойной клик по инвентарю не должен утащить подсказку из стола
+		menu.setCarried(new ItemStack(Items.FEATHER, 10));
+		menu.clicked(40, 0, ContainerInput.PICKUP_ALL, player);
+		boolean pickAll = menu.getCarried().getCount() == 10 && inventory.getItem(0).isEmpty();
+
+		// creative CLONE по подсказке не должен выдать 64 предмета
+		menu.setCarried(ItemStack.EMPTY);
+		menu.clicked(0, 0, ContainerInput.CLONE, player);
+		boolean clone = menu.getCarried().isEmpty() && inventory.getItem(0).isEmpty();
+
+		// Q по слоту с подсказкой ничего не выбрасывает
+		menu.clicked(0, 0, ContainerInput.THROW, player);
+		boolean throwSafe = inventory.getItem(0).isEmpty() && inventory.getPreview(0).getCount() == 1;
+
+		// отрицательный слот с SWAP раньше ронял сервер на slots.get(-1)
+		boolean negativeSafe = true;
+		try {
+			menu.clicked(-999, 0, ContainerInput.SWAP, player);
+			menu.clicked(-1, 0, ContainerInput.THROW, player);
+		} catch (RuntimeException e) {
+			negativeSafe = false;
+			LOGGER.error("Fletcher: отрицательный слот не перехвачен", e);
+		}
+
+		boolean ok = swapped && swapRejected && drag && dragRejected && pickAll && clone && throwSafe && negativeSafe;
+		LOGGER.info("Fletcher: клики — F {}, F-чужая {}, драг {}, драг-чужая {}, двойной {}, CLONE {}, Q {}, отрицательный слот {}",
+			ok(swapped), ok(swapRejected), ok(drag), ok(dragRejected), ok(pickAll), ok(clone), ok(throwSafe), ok(negativeSafe));
+		return ok;
+	}
+
+	private static boolean arrowTest(MinecraftServer server) throws Exception {
+		ServerLevel level = server.overworld();
+		ItemStack stack = FletcherArrows.build(
+			new ItemStack(Items.FEATHER),
+			new ItemStack(Items.STICK),
+			new ItemStack(Items.IRON_NUGGET)
+		);
+		if (stack.isEmpty()) {
+			LOGGER.error("Fletcher: стрела не собралась");
+			return false;
+		}
+
+		Arrow arrow = new Arrow(level, 0.0D, 128.0D, 0.0D, stack, new ItemStack(Items.BOW));
+		float drag = drag(arrow);
+		double damage = damage(arrow);
+		int pierce = arrow.getPierceLevel();
+		boolean ok = Math.abs(drag - FletcherArrows.dragOf(stack)) < 1.0E-6F
+			&& Math.abs(damage - FletcherArrows.baseDamageOf(stack)) < 1.0E-6D
+			&& pierce == FletcherArrows.pierceOf(stack);
+		LOGGER.info("Fletcher: стрела drag={} (ожид. {}), damage={} (ожид. {}), pierce={} (ожид. {})",
+			drag, FletcherArrows.dragOf(stack), damage, FletcherArrows.baseDamageOf(stack),
+			pierce, FletcherArrows.pierceOf(stack));
+		arrow.discard();
+		return ok;
+	}
+
+	/** NBT можно подделать командой или креативом: значения обязаны зажиматься. */
+	private static boolean clampTest(MinecraftServer server) throws Exception {
+		ServerLevel level = server.overworld();
+		ItemStack forged = new ItemStack(Items.ARROW, 4);
+		CompoundTag tag = new CompoundTag();
+		tag.putFloat(FletcherArrows.KEY_DRAG, 5.0F);
+		tag.putFloat(FletcherArrows.KEY_DAMAGE, 1000.0F);
+		tag.putInt(FletcherArrows.KEY_PIERCE, 99);
+		CustomData.update(DataComponents.CUSTOM_DATA, forged, root -> root.put(FletcherArrows.NBT_ROOT, tag));
+
+		Arrow arrow = new Arrow(level, 0.0D, 128.0D, 0.0D, forged, new ItemStack(Items.BOW));
+		boolean ok = Math.abs(drag(arrow) - 0.997F) < 1.0E-6F
+			&& Math.abs(damage(arrow) - 6.0D) < 1.0E-6D
+			&& arrow.getPierceLevel() == 3;
+		LOGGER.info("Fletcher: подделка — drag={}, damage={}, pierce={} (ожид. 0.997 / 6.0 / 3)",
+			drag(arrow), damage(arrow), arrow.getPierceLevel());
+		arrow.discard();
+		return ok;
+	}
+
+	private static float drag(AbstractArrow arrow) throws ReflectiveOperationException {
+		Method method = AbstractArrow.class.getDeclaredMethod("getAirDrag");
+		method.setAccessible(true);
+		return (float) method.invoke(arrow);
+	}
+
+	private static double damage(AbstractArrow arrow) throws ReflectiveOperationException {
+		Field field = AbstractArrow.class.getDeclaredField("baseDamage");
+		field.setAccessible(true);
+		return field.getDouble(arrow);
+	}
+
+	private static String ok(boolean value) {
+		return value ? "OK" : "ПРОВАЛ";
+	}
+}

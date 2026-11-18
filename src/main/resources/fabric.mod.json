@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"id": "fletcher",
+	"version": "${version}",
+	"name": "Fletcher Table",
+	"description": "Стол лучника открывает сборку стрел: оперение, палка, наконечник дают урон, дальность и пробивание.",
+	"authors": [
+		"deaefer"
+	],
+	"license": "MIT",
+	"environment": "server",
+	"entrypoints": {
+		"main": [
+			"fletcher.FletcherMod"
+		]
+	},
+	"mixins": [
+		"fletcher.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "${minecraft_dep}",
+		"java": ">=25"
+	}
+}

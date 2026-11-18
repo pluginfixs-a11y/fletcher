@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "fletcher.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": [
+		"AbstractArrowInvoker",
+		"AbstractArrowMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}
