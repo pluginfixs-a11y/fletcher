@@ -8,6 +8,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
@@ -30,6 +31,8 @@ import org.slf4j.Logger;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Самопроверка запускается только с {@code -Dfletcher.selftest} на тестовом сервере.
@@ -422,94 +425,184 @@ public final class SelfTest {
 	 * Особые свойства частей: гравитация мембраны, огонь блейза, подсветка аметиста, огонь по блоку
 	 * от кремня и отбрасывание кости. Попадание зовётся настоящим {@code onHitEntity}, а не своей
 	 * копией логики — иначе проверяли бы себя, а не игру.
+	 * <p>
+	 * Эффекты навешиваются в {@code doPostHurtEffects}, поэтому отдельно проверяется, что в кадры
+	 * неуязвимости (второе попадание подряд) они не проходят: иначе мультивыстрел жёг бы цель без урона.
 	 */
 	private static boolean specialTest(MinecraftServer server) throws Exception {
 		ServerLevel level = server.overworld();
+		List<Entity> spawned = new ArrayList<>();
+		BlockPos stone = new BlockPos(1000, 200, 1000);
+		boolean stonePlaced = false;
 
-		// мембрана: 0.025 против ванильных 0.05
-		ItemStack floating = FletcherArrows.build(
-			new ItemStack(Items.PHANTOM_MEMBRANE), new ItemStack(Items.STICK), new ItemStack(Items.COPPER_NUGGET));
-		Arrow glider = new Arrow(level, 0.0D, 128.0D, 0.0D, floating, new ItemStack(Items.BOW));
-		boolean glide = Math.abs(glider.getGravity() - 0.025) < 1.0E-9
-			&& Math.abs(glider.getGravity() * 2 - 0.05) < 1.0E-9;
-		glider.discard();
+		boolean glide;
+		boolean lit;
+		boolean ignites;
+		boolean glows;
+		double vanillaPush;
+		double push;
+		boolean firePlaced;
+		boolean fireRespectsOwner;
+		boolean noEffectInIFrames;
+		boolean diamondPierce;
+		boolean loreLines;
+		boolean noSpecialForCheap;
+		boolean clampedSpecials;
+		boolean vanillaPlain;
+		int burntTicks;
 
-		// блейз: стрела горит, цель горит 10 с (200 тиков) вместо ванильных 100
-		ItemStack burning = FletcherArrows.build(
-			new ItemStack(Items.FEATHER), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.COPPER_NUGGET));
-		Arrow fireArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, burning, new ItemStack(Items.BOW));
-		boolean lit = fireArrow.isOnFire();
-		Pig burnt = pig(level);
-		fireArrow.setDeltaMovement(1.0, 0.0, 0.0);
-		float before = burnt.getHealth();
-		hit(fireArrow, burnt);
-		boolean ignites = burnt.getRemainingFireTicks() >= 190 && burnt.getHealth() < before;
-		fireArrow.discard();
-		burnt.discard();
+		try {
+			// мембрана: 0.025 против ванильных 0.05
+			ItemStack floating = FletcherArrows.build(
+				new ItemStack(Items.PHANTOM_MEMBRANE), new ItemStack(Items.STICK), new ItemStack(Items.COPPER_NUGGET));
+			Arrow glider = new Arrow(level, 0.0D, 128.0D, 0.0D, floating, new ItemStack(Items.BOW));
+			glide = Math.abs(glider.getGravity() - 0.025) < 1.0E-9
+				&& Math.abs(glider.getGravity() * 2 - 0.05) < 1.0E-9;
+			glider.discard();
 
-		// аметист: подсветка 8 с
-		ItemStack glowing = FletcherArrows.build(
-			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.AMETHYST_SHARD));
-		Arrow glowArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, glowing, new ItemStack(Items.BOW));
-		Pig seen = pig(level);
-		glowArrow.setDeltaMovement(1.0, 0.0, 0.0);
-		hit(glowArrow, seen);
-		boolean glows = seen.hasEffect(MobEffects.GLOWING)
-			&& seen.getEffect(MobEffects.GLOWING).getDuration() >= 150;
-		glowArrow.discard();
-		seen.discard();
+			// блейз: стрела горит, цель горит 10 с (200 тиков) вместо ванильных 100
+			ItemStack burning = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.COPPER_NUGGET));
+			Arrow fireArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, burning, new ItemStack(Items.BOW));
+			lit = fireArrow.isOnFire();
+			Pig burnt = pig(level, spawned);
+			fireArrow.setDeltaMovement(1.0, 0.0, 0.0);
+			float before = burnt.getHealth();
+			hit(fireArrow, burnt);
+			burntTicks = burnt.getRemainingFireTicks();
+			ignites = burntTicks >= 190 && burnt.getHealth() < before;
+			fireArrow.discard();
 
-		// кость: отбрасывание 2 уровня (у ванильной стрелы без «Удара» толчка нет вовсе)
-		ItemStack bony = FletcherArrows.build(
-			new ItemStack(Items.FEATHER), new ItemStack(Items.BONE), new ItemStack(Items.COPPER_NUGGET));
-		Arrow knockArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, bony, new ItemStack(Items.BOW));
-		Pig pushed = pig(level);
-		knockArrow.setDeltaMovement(1.0, 0.0, 0.0);
-		hit(knockArrow, pushed);
-		double push = pushed.getDeltaMovement().horizontalDistance();
-		knockArrow.discard();
-		pushed.discard();
+			// аметист: подсветка 8 с
+			ItemStack glowing = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.AMETHYST_SHARD));
+			Arrow glowArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, glowing, new ItemStack(Items.BOW));
+			Pig seen = pig(level, spawned);
+			glowArrow.setDeltaMovement(1.0, 0.0, 0.0);
+			hit(glowArrow, seen);
+			glows = seen.hasEffect(MobEffects.GLOWING)
+				&& seen.getEffect(MobEffects.GLOWING).getDuration() >= 150;
+			glowArrow.discard();
 
-		// кремень: поджигает блок, в который воткнулась (как огниво)
-		BlockPos stone = new BlockPos(0, 200, 0);
-		level.setBlock(stone, Blocks.STONE.defaultBlockState(), 3);
-		ItemStack flinty = FletcherArrows.build(
-			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.FLINT));
-		Arrow flintArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, flinty, new ItemStack(Items.BOW));
-		hitBlock(flintArrow, new BlockHitResult(new Vec3(0.5, 201.0, 0.5), Direction.UP, stone, false));
-		boolean firePlaced = level.getBlockState(stone.above()).getBlock() instanceof BaseFireBlock;
-		level.removeBlock(stone.above(), false);
-		level.removeBlock(stone, false);
-		flintArrow.discard();
+			// ванильная стрела — точка отсчёта: своего толчка у неё нет
+			Arrow reference = new Arrow(level, 0.0D, 128.0D, 0.0D, new ItemStack(Items.ARROW), new ItemStack(Items.BOW));
+			Pig control = pig(level, spawned);
+			reference.setDeltaMovement(1.0, 0.0, 0.0);
+			hit(reference, control);
+			vanillaPush = control.getDeltaMovement().horizontalDistance();
+			reference.discard();
+			vanillaPlain = !reference.isOnFire()
+				&& Math.abs(reference.getGravity() - 0.05) < 1.0E-9
+				&& reference.getPierceLevel() == 0;
 
-		// алмазный наконечник теперь добирается до потолка пробивания
-		ItemStack sniper = FletcherArrows.build(
-			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.DIAMOND));
-		boolean diamondPierce = FletcherArrows.pierceOf(sniper) == 3;
+			// кость: отбрасывание 2 уровня
+			ItemStack bony = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.BONE), new ItemStack(Items.COPPER_NUGGET));
+			Arrow knockArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, bony, new ItemStack(Items.BOW));
+			Pig pushed = pig(level, spawned);
+			knockArrow.setDeltaMovement(1.0, 0.0, 0.0);
+			hit(knockArrow, pushed);
+			push = pushed.getDeltaMovement().horizontalDistance();
+			knockArrow.discard();
 
-		// лор: три строки чисел + строка на каждую часть со свойством; у бумаги и бамбука свойств нет
-		ItemStack described = FletcherArrows.build(
-			new ItemStack(Items.PHANTOM_MEMBRANE), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.FLINT));
-		ItemLore lore = described.get(DataComponents.LORE);
-		boolean loreLines = lore != null && lore.lines().size() == 6;
-		boolean noSpecialForCheap = FletcherArrows.specialLabelOf(new ItemStack(Items.BAMBOO)).isEmpty()
-			&& FletcherArrows.specialLabelOf(new ItemStack(Items.PAPER)).isEmpty()
-			&& FletcherArrows.specialLabelOf(new ItemStack(Items.STICK)).isEmpty()
-			&& !FletcherArrows.specialLabelOf(new ItemStack(Items.BLAZE_ROD)).isEmpty();
+			// второе попадание в кадры неуязвимости: урона нет — значит нет ни огня, ни подсветки.
+			// Первая стрела заведомо сильнее второй, иначе ваниль пропустит урон разницей
+			Pig guarded = pig(level, spawned);
+			ItemStack heavy = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.DIAMOND));
+			Arrow first = new Arrow(level, 0.0D, 128.0D, 0.0D, heavy, new ItemStack(Items.BOW));
+			first.setDeltaMovement(1.0, 0.0, 0.0);
+			hit(first, guarded);
+			first.discard();
+			ItemStack weakFire = FletcherArrows.build(
+				new ItemStack(Items.PAPER), new ItemStack(Items.BAMBOO), new ItemStack(Items.FLINT));
+			CustomData.update(DataComponents.CUSTOM_DATA, weakFire, root -> {
+				CompoundTag values = root.getCompoundOrEmpty(FletcherArrows.NBT_ROOT).copy();
+				values.putFloat(FletcherArrows.KEY_IGNITE, 10.0F);
+				root.put(FletcherArrows.NBT_ROOT, values);
+			});
+			Arrow second = new Arrow(level, 0.0D, 128.0D, 0.0D, weakFire, new ItemStack(Items.BOW));
+			second.setDeltaMovement(1.0, 0.0, 0.0);
+			hit(second, guarded);
+			noEffectInIFrames = guarded.getRemainingFireTicks() == 0 && !guarded.hasEffect(MobEffects.GLOWING);
+			second.discard();
+
+			// кремень: поджигает блок, в который воткнулась (как огниво), но только у игрока и там,
+			// где ему можно взаимодействовать
+			FakePlayer owner = freshPlayer(server);
+			level.setChunkForced(stone.getX() >> 4, stone.getZ() >> 4, true);
+			level.setBlock(stone, Blocks.STONE.defaultBlockState(), 3);
+			stonePlaced = true;
+			ItemStack flinty = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.FLINT));
+			Arrow flintArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, flinty, new ItemStack(Items.BOW));
+			flintArrow.setOwner(owner);
+			hitBlock(flintArrow, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			firePlaced = level.getBlockState(stone.above()).getBlock() instanceof BaseFireBlock;
+			level.removeBlock(stone.above(), false);
+			flintArrow.discard();
+			Arrow orphan = new Arrow(level, 0.0D, 200.0D, 0.0D, flinty, new ItemStack(Items.BOW));
+			hitBlock(orphan, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			fireRespectsOwner = !(level.getBlockState(stone.above()).getBlock() instanceof BaseFireBlock);
+			orphan.discard();
+
+			// алмазный наконечник теперь добирается до потолка пробивания
+			ItemStack sniper = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.DIAMOND));
+			diamondPierce = FletcherArrows.pierceOf(sniper) == 3;
+
+			// лор: три строки чисел + строка на каждую часть со свойством
+			ItemStack described = FletcherArrows.build(
+				new ItemStack(Items.PHANTOM_MEMBRANE), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.FLINT));
+			ItemLore lore = described.get(DataComponents.LORE);
+			loreLines = lore != null && lore.lines().size() == 6;
+			noSpecialForCheap = FletcherArrows.specialLabelOf(new ItemStack(Items.BAMBOO)).isEmpty()
+				&& FletcherArrows.specialLabelOf(new ItemStack(Items.PAPER)).isEmpty()
+				&& FletcherArrows.specialLabelOf(new ItemStack(Items.STICK)).isEmpty()
+				&& !FletcherArrows.specialLabelOf(new ItemStack(Items.BLAZE_ROD)).isEmpty();
+
+			// подделанные спецсвойства зажимаются по честным потолкам
+			ItemStack forgedSpecial = forgedArrow(FletcherArrows.BASE_DRAG, FletcherArrows.BASE_DAMAGE, 0);
+			CustomData.update(DataComponents.CUSTOM_DATA, forgedSpecial, root -> {
+				CompoundTag values = new CompoundTag();
+				values.putFloat(FletcherArrows.KEY_IGNITE, 999.0F);
+				values.putFloat(FletcherArrows.KEY_GRAVITY, 0.0001F);
+				values.putInt(FletcherArrows.KEY_GLOW, 99_999);
+				values.putFloat(FletcherArrows.KEY_KNOCKBACK, 99.0F);
+				root.put(FletcherArrows.NBT_ROOT, values);
+			});
+			clampedSpecials = FletcherArrows.igniteOf(forgedSpecial) == 30.0F
+				&& Math.abs(FletcherArrows.gravityOf(forgedSpecial) - 0.005F) < 1.0E-6F
+				&& FletcherArrows.glowOf(forgedSpecial) == 1200
+				&& Math.abs(FletcherArrows.knockbackOf(forgedSpecial) - 2.0F) < 1.0E-6F;
+		} finally {
+			for (Entity entity : spawned) {
+				entity.discard();
+			}
+			if (stonePlaced) {
+				level.removeBlock(stone.above(), false);
+				level.removeBlock(stone, false);
+				level.setChunkForced(stone.getX() >> 4, stone.getZ() >> 4, false);
+			}
+		}
 
 		LOGGER.info("Fletcher: свойства — мембрана {}, блейз горит {}, цель горит {} тиков, аметист {}, "
-				+ "кость толчок {}, кремень огонь {}, алмаз пробивание {}, лор {}, без свойств у дешёвых {}",
-			ok(glide), ok(lit), burnt.getRemainingFireTicks(), ok(glows), push, ok(firePlaced),
-			ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap));
-		return glide && lit && ignites && glows && push > 0.5 && firePlaced && diamondPierce
-			&& loreLines && noSpecialForCheap;
+				+ "кость толчок {} (ванильная {}), кадры неуязвимости {}, кремень огонь {}, без владельца {}, "
+				+ "алмаз пробивание {}, лор {}, без свойств у дешёвых {}, зажим подделки {}, обычная стрела {}",
+			ok(glide), ok(lit), burntTicks, ok(glows), push, vanillaPush, ok(noEffectInIFrames),
+			ok(firePlaced), ok(fireRespectsOwner), ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap),
+			ok(clampedSpecials), ok(vanillaPlain));
+		return glide && lit && ignites && glows && push > vanillaPush + 0.5 && noEffectInIFrames
+			&& firePlaced && fireRespectsOwner && diamondPierce && loreLines && noSpecialForCheap
+			&& clampedSpecials && vanillaPlain;
 	}
 
 	/** Свинья-мишень в воздухе: по ней и проверяем попадание. */
-	private static Pig pig(ServerLevel level) {
+	private static Pig pig(ServerLevel level, List<Entity> spawned) {
 		Pig pig = EntityTypes.PIG.create(level, EntitySpawnReason.COMMAND);
 		pig.setPos(0.5D, 128.0D, 0.5D);
 		level.addFreshEntity(pig);
+		spawned.add(pig);
 		return pig;
 	}
 

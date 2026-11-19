@@ -4,6 +4,7 @@ import fletcher.FletcherArrows;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -37,7 +38,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * <p>
  * Инерция и гравитация кэшируются: {@code getAirDrag} и {@code getDefaultGravity} зовутся каждый тик
  * каждой стрелой, а чтение NBT каждый раз копирует весь compound. Кэш обновляется там же, где
- * применяются свойства. Эффекты при попадании берут готовые числа из тех же полей.
+ * применяются свойства. Эффекты при попадании берут готовые числа из тех же полей и навешиваются
+ * в {@code doPostHurtEffects} — то есть только когда урон реально прошёл.
  */
 @Mixin(AbstractArrow.class)
 public abstract class AbstractArrowMixin {
@@ -105,15 +107,16 @@ public abstract class AbstractArrowMixin {
 	}
 
 	/**
-	 * Эффекты частей на попадании. Горение растягиваем после ванильного поджога (оно ставит ровно
-	 * 5 секунд), отбрасывание считаем по той же формуле, что ванильный «Удар», подсветка — обычный
-	 * зельевой эффект, клиент рисует контур сам.
+	 * Эффекты частей на попадании — только после успешного урона: ваниль зовёт {@code doPostHurtEffects}
+	 * из ветки, где {@code hurt} вернул {@code true}. На отказе (кадры неуязвимости, креатив, отмена
+	 * другим модом) эффектов нет — иначе вторая стрела мультивыстрела жгла бы цель без урона.
+	 * <p>
+	 * Горение растягиваем после ванильного поджога (оно ставит ровно 5 секунд), отбрасывание считаем
+	 * по той же формуле, что ванильный «Удар», подсветка — обычный зельевой эффект, клиент рисует
+	 * контур сам.
 	 */
-	@Inject(method = "onHitEntity", at = @At("RETURN"))
-	private void fletcher$onHitEntity(EntityHitResult hit, CallbackInfo ci) {
-		if (!(hit.getEntity() instanceof LivingEntity target)) {
-			return;
-		}
+	@Inject(method = "doPostHurtEffects", at = @At("RETURN"))
+	private void fletcher$postHurt(LivingEntity target, CallbackInfo ci) {
 		AbstractArrow self = (AbstractArrow) (Object) this;
 		// эндермена ваниль не поджигает — не меняем это правило
 		if (this.fletcher$ignite > 0.0F && self.isOnFire() && !target.is(EntityTypes.ENDERMAN)) {
@@ -122,7 +125,8 @@ public abstract class AbstractArrowMixin {
 		if (this.fletcher$glow > 0) {
 			target.addEffect(new MobEffectInstance(MobEffects.GLOWING, this.fletcher$glow, 0));
 		}
-		if (this.fletcher$knockback > 0.0F) {
+		// ваниль при нулевом горизонтальном направлении не толкает вовсе — не добавляем «подскок»
+		if (this.fletcher$knockback > 0.0F && (this.fletcher$dirX != 0.0 || this.fletcher$dirZ != 0.0)) {
 			double resistance = Math.max(0.0, 1.0 - target.getAttributeValue(Attributes.KNOCKBACK_RESISTANCE));
 			double force = this.fletcher$knockback * 0.6 * resistance;
 			if (force > 0.0) {
@@ -141,11 +145,14 @@ public abstract class AbstractArrowMixin {
 		if (!(self.level() instanceof ServerLevel level)) {
 			return;
 		}
-		BlockPos pos = hit.getBlockPos();
+		// огниво — действие игрока: без владельца (раздатчик) и там, где игроку нельзя взаимодействовать
+		// (спавн-защита, чужой регион), огня не будет
+		if (!(self.getOwner() instanceof ServerPlayer owner) || !level.mayInteract(owner, hit.getBlockPos())) {
+			return;
+		}
+		BlockPos pos = hit.getBlockPos().relative(hit.getDirection());
 		Direction direction = hit.getDirection();
-		if (BaseFireBlock.canBePlacedAt(level, pos.relative(direction), direction)) {
-			pos = pos.relative(direction);
-		} else if (!BaseFireBlock.canBePlacedAt(level, pos, direction)) {
+		if (!BaseFireBlock.canBePlacedAt(level, pos, direction)) {
 			return;
 		}
 		BlockState fire = BaseFireBlock.getState(level, pos);

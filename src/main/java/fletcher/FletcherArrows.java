@@ -75,7 +75,8 @@ public final class FletcherArrows {
 	private static final float MIN_READ_GRAVITY = 0.005F;
 	private static final float VANILLA_GRAVITY = 0.05F;
 	private static final int MAX_READ_GLOW = 1200;
-	private static final float MAX_READ_KNOCKBACK = 4.0F;
+	/** Отбрасывание зажимаем ровно по честному максимуму (кость = «Удар II»): «Удар» на луке добавится сам. */
+	private static final float MAX_READ_KNOCKBACK = 2.0F;
 
 	private static final Map<Item, Part> FEATHERS = new HashMap<>();
 	private static final Map<Item, Part> SHAFTS = new HashMap<>();
@@ -297,7 +298,10 @@ public final class FletcherArrows {
 			.withStyle(head.pierce() > 0 || special.glow() > 0 ? ChatFormatting.AQUA : ChatFormatting.WHITE));
 		List<Component> lore = new ArrayList<>();
 		lore.add(Component.literal("Урон: " + damagePercent(damage)).withStyle(ChatFormatting.GRAY));
-		lore.add(Component.literal("Дальность: " + rangePercent(drag)).withStyle(ChatFormatting.GRAY));
+		// таблица процентов снята с ванильной гравитации: при своей (мембрана) она врёт в меньшую сторону
+		lore.add(Component.literal(special.gravity() > 0.0F
+			? "Дальность: " + rangePercent(drag) + " по инерции и почти не падает"
+			: "Дальность: " + rangePercent(drag)).withStyle(ChatFormatting.GRAY));
 		lore.add(Component.literal("Пробивание: " + pierce).withStyle(ChatFormatting.GRAY));
 		for (Special used : new Special[]{specialOf(featherStack), specialOf(shaftStack), specialOf(headStack)}) {
 			if (!used.isEmpty()) {

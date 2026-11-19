@@ -81,17 +81,26 @@ stick) deliberately get nothing — they stay the cheap filler:
 Specials stack: membrane + blaze rod is a gliding fire arrow, amethyst + piercing 3 lights up a whole
 line of mobs. They travel in the arrow's own `custom_data.fletcher` (`ignite`, `gravity`, `glow`,
 `fire`, `knockback`), so an old arrow without those keys is simply a plain fletcher arrow, and every
-read is clamped (ignite ≤ 30 s, gravity 0.005..0.05, glow ≤ 1200 ticks, knockback ≤ 4).
+read is clamped to what an honest arrow can do (ignite ≤ 30 s, gravity 0.005..0.05, glow ≤ 1200 ticks,
+knockback ≤ 2 = Punch II — Punch on the bow adds on top by itself).
+
+On-hit specials hang off `doPostHurtEffects`, which vanilla calls only inside the branch where the
+damage actually went through. So the second arrow of a multishot volley, an arrow stopped by i-frames,
+and an arrow at a target another mod cancelled deal no fire, no glow and no push — exactly like the
+vanilla ignite that is rolled back in those cases.
 
 Three things are deliberately vanilla-shaped rather than stronger:
 
 * **fire** — the arrow must be burning for vanilla to ignite the target at all, and `clearFire` in the
   arrow's tick puts it out in water or rain, so a fire arrow is not a permanent upgrade;
 * **flint fire on blocks** — the arrow places fire exactly where flint and steel would
-  (`BaseFireBlock.canBePlacedAt` → `getState` → `setBlock(..., 11)` + the same sound). Spread still
-  obeys `doFireTick`, so a server that turned fire spread off does not burn down;
+  (`BaseFireBlock.canBePlacedAt` → `getState` → `setBlock(..., 11)` + the same sound), but only for an
+  arrow with a player owner and only where that player is allowed to interact — spawn protection and
+  region plugins refuse it the same way they refuse the flint and steel. Spread still obeys
+  `doFireTick`, so a server that turned fire spread off does not burn down;
 * **knockback** — computed with vanilla's own formula (`direction × force × 0.6 × (1 − knockback
-  resistance))`, so Punch on the bow stacks with it instead of being replaced.
+  resistance))`, so Punch on the bow stacks with it instead of being replaced, and a straight-down
+  hit pushes nothing, as in vanilla.
 
 ## Mechanics
 
@@ -101,7 +110,7 @@ claimed +200 % where the real gain was +30 %): 0.991 → +4 %, 0.9925 → +10 %,
 
 The server owns the numbers: a mixin on `AbstractArrow.getAirDrag()` (inertia → range; vanilla uses
 another method in water, nothing is overridden there), `getDefaultGravity()` (which `Entity.applyGravity`
-reaches through `getGravity()`), `onHitEntity`/`onHitBlock` for the specials, plus both constructors
+reaches through `getGravity()`), `doPostHurtEffects`/`onHitBlock` for the specials, plus both constructors
 and `setPickupItemStack` (base damage via `setBaseDamage`, piercing via `@Invoker("setPierceLevel")`).
 Inertia and gravity are cached in fields because both run on every arrow every tick and reading the
 component copied a tag each time. Crossbow Piercing is never weakened (`max`, not overwrite). The
@@ -140,9 +149,11 @@ dropping the fletcher damage back to 2.0.
 
 The specials are exercised through the real `onHitEntity`/`onHitBlock`, not through a copy of their
 logic: a membrane arrow reports gravity 0.025, a blaze rod arrow is on fire and leaves a pig burning
-for 200 ticks, an amethyst arrow gives the pig 8 s of Glowing, a bone arrow pushes it, a flint arrow
-sets the block it hits on fire, a diamond arrow reports piercing 3, the lore of a three-special arrow
-has six lines, and bamboo/paper/stick report no special at all.
+for 200 ticks, an amethyst arrow gives the pig 8 s of Glowing, a bone arrow pushes it further than a
+plain arrow does, a second arrow into the same pig's i-frames applies nothing, a flint arrow sets the
+block it hits on fire while an ownerless one does not, a diamond arrow reports piercing 3, the lore of
+a three-special arrow has six lines, forged `ignite/gravity/glow/knockback` clamp to 30 / 0.005 / 1200 /
+2, and bamboo/paper/stick report no special at all.
 
 ## Install
 
