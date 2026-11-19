@@ -146,8 +146,10 @@ public abstract class AbstractArrowMixin {
 			return;
 		}
 		// огниво — действие игрока: без владельца (раздатчик) и там, где игроку нельзя взаимодействовать
-		// (спавн-защита, чужой регион), огня не будет
-		if (!(self.getOwner() instanceof ServerPlayer owner) || !level.mayInteract(owner, hit.getBlockPos())) {
+		// (спавн-защита, чужой регион, приключение), огня не будет — та же проверка, что у ванильного
+		// использования предмета на блоке
+		if (!(self.getOwner() instanceof ServerPlayer owner)
+			|| !owner.mayUseItemAt(hit.getBlockPos(), hit.getDirection(), self.getPickupItemStackOrigin())) {
 			return;
 		}
 		BlockPos pos = hit.getBlockPos().relative(hit.getDirection());

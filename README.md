@@ -95,9 +95,10 @@ Three things are deliberately vanilla-shaped rather than stronger:
   arrow's tick puts it out in water or rain, so a fire arrow is not a permanent upgrade;
 * **flint fire on blocks** — the arrow places fire exactly where flint and steel would
   (`BaseFireBlock.canBePlacedAt` → `getState` → `setBlock(..., 11)` + the same sound), but only for an
-  arrow with a player owner and only where that player is allowed to interact — spawn protection and
-  region plugins refuse it the same way they refuse the flint and steel. Spread still obeys
-  `doFireTick`, so a server that turned fire spread off does not burn down;
+  arrow with a player owner and only where `mayUseItemAt` allows it — the very check vanilla runs
+  before using flint and steel, so spawn protection, adventure mode and region plugins refuse the
+  arrow the same way. Spread still obeys `doFireTick`, so a server that turned fire spread off does
+  not burn down;
 * **knockback** — computed with vanilla's own formula (`direction × force × 0.6 × (1 − knockback
   resistance))`, so Punch on the bow stacks with it instead of being replaced, and a straight-down
   hit pushes nothing, as in vanilla.

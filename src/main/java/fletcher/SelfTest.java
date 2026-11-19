@@ -444,6 +444,8 @@ public final class SelfTest {
 		boolean firePlaced;
 		boolean fireRespectsOwner;
 		boolean noEffectInIFrames;
+		boolean ownerlessBurns;
+		boolean noDownPush;
 		boolean diamondPierce;
 		boolean loreLines;
 		boolean noSpecialForCheap;
@@ -512,20 +514,42 @@ public final class SelfTest {
 				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.DIAMOND));
 			Arrow first = new Arrow(level, 0.0D, 128.0D, 0.0D, heavy, new ItemStack(Items.BOW));
 			first.setDeltaMovement(1.0, 0.0, 0.0);
+			float beforeGuard = guarded.getHealth();
 			hit(first, guarded);
+			boolean heavyLanded = guarded.getHealth() < beforeGuard;
 			first.discard();
-			ItemStack weakFire = FletcherArrows.build(
-				new ItemStack(Items.PAPER), new ItemStack(Items.BAMBOO), new ItemStack(Items.FLINT));
-			CustomData.update(DataComponents.CUSTOM_DATA, weakFire, root -> {
+			// слабая стрела: бумага + бамбук + аметист = 1.0 урона (меньше 5 у первой), но с подделанным
+			// горением — так проверяются обе половины эффектов, огонь и подсветка
+			ItemStack weakGlow = FletcherArrows.build(
+				new ItemStack(Items.PAPER), new ItemStack(Items.BAMBOO), new ItemStack(Items.AMETHYST_SHARD));
+			CustomData.update(DataComponents.CUSTOM_DATA, weakGlow, root -> {
 				CompoundTag values = root.getCompoundOrEmpty(FletcherArrows.NBT_ROOT).copy();
 				values.putFloat(FletcherArrows.KEY_IGNITE, 10.0F);
 				root.put(FletcherArrows.NBT_ROOT, values);
 			});
-			Arrow second = new Arrow(level, 0.0D, 128.0D, 0.0D, weakFire, new ItemStack(Items.BOW));
+			Arrow second = new Arrow(level, 0.0D, 128.0D, 0.0D, weakGlow, new ItemStack(Items.BOW));
 			second.setDeltaMovement(1.0, 0.0, 0.0);
 			hit(second, guarded);
-			noEffectInIFrames = guarded.getRemainingFireTicks() == 0 && !guarded.hasEffect(MobEffects.GLOWING);
+			noEffectInIFrames = heavyLanded
+				&& guarded.getRemainingFireTicks() == 0 && !guarded.hasEffect(MobEffects.GLOWING);
 			second.discard();
+
+			// скелет и раздатчик стреляют без владельца: огонь и подсветка обязаны работать, а вот
+			// поджигать блок — нет (проверено выше)
+			Pig wild = pig(level, spawned);
+			Arrow ownerlessHeat = new Arrow(level, 0.0D, 128.0D, 0.0D, burning, new ItemStack(Items.BOW));
+			ownerlessHeat.setDeltaMovement(1.0, 0.0, 0.0);
+			hit(ownerlessHeat, wild);
+			ownerlessBurns = wild.getRemainingFireTicks() >= 190;
+			ownerlessHeat.discard();
+
+			// попадание строго сверху не толкает (у ванилы в этом случае толчка тоже нет)
+			Pig top = pig(level, spawned);
+			Arrow downward = new Arrow(level, 0.0D, 128.0D, 0.0D, bony, new ItemStack(Items.BOW));
+			downward.setDeltaMovement(0.0, 1.0, 0.0);
+			hit(downward, top);
+			noDownPush = top.getDeltaMovement().horizontalDistance() <= vanillaPush + 0.05;
+			downward.discard();
 
 			// кремень: поджигает блок, в который воткнулась (как огниво), но только у игрока и там,
 			// где ему можно взаимодействовать
@@ -587,14 +611,15 @@ public final class SelfTest {
 		}
 
 		LOGGER.info("Fletcher: свойства — мембрана {}, блейз горит {}, цель горит {} тиков, аметист {}, "
-				+ "кость толчок {} (ванильная {}), кадры неуязвимости {}, кремень огонь {}, без владельца {}, "
+				+ "кость толчок {} (ванильная {}), кадры неуязвимости {}, без владельца поджигает {}, "
+				+ "сверху не толкает {}, кремень огонь {}, без владельца огня нет {}, "
 				+ "алмаз пробивание {}, лор {}, без свойств у дешёвых {}, зажим подделки {}, обычная стрела {}",
 			ok(glide), ok(lit), burntTicks, ok(glows), push, vanillaPush, ok(noEffectInIFrames),
-			ok(firePlaced), ok(fireRespectsOwner), ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap),
-			ok(clampedSpecials), ok(vanillaPlain));
+			ok(ownerlessBurns), ok(noDownPush), ok(firePlaced), ok(fireRespectsOwner), ok(diamondPierce),
+			ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials), ok(vanillaPlain));
 		return glide && lit && ignites && glows && push > vanillaPush + 0.5 && noEffectInIFrames
-			&& firePlaced && fireRespectsOwner && diamondPierce && loreLines && noSpecialForCheap
-			&& clampedSpecials && vanillaPlain;
+			&& ownerlessBurns && noDownPush && firePlaced && fireRespectsOwner && diamondPierce
+			&& loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
 	}
 
 	/** Свинья-мишень в воздухе: по ней и проверяем попадание. */
