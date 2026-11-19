@@ -7,6 +7,11 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.animal.pig.Pig;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -14,6 +19,13 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.core.Direction;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Field;
@@ -44,6 +56,7 @@ public final class SelfTest {
 			ok &= clickPathsTest(server);
 			ok &= arrowTest(server);
 			ok &= clampTest(server);
+			ok &= specialTest(server);
 		} catch (Throwable t) {
 			LOGGER.error("Fletcher: самопроверка упала", t);
 			ok = false;
@@ -403,6 +416,113 @@ public final class SelfTest {
 		tag.putInt(FletcherArrows.KEY_PIERCE, pierce);
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, root -> root.put(FletcherArrows.NBT_ROOT, tag));
 		return stack;
+	}
+
+	/**
+	 * Особые свойства частей: гравитация мембраны, огонь блейза, подсветка аметиста, огонь по блоку
+	 * от кремня и отбрасывание кости. Попадание зовётся настоящим {@code onHitEntity}, а не своей
+	 * копией логики — иначе проверяли бы себя, а не игру.
+	 */
+	private static boolean specialTest(MinecraftServer server) throws Exception {
+		ServerLevel level = server.overworld();
+
+		// мембрана: 0.025 против ванильных 0.05
+		ItemStack floating = FletcherArrows.build(
+			new ItemStack(Items.PHANTOM_MEMBRANE), new ItemStack(Items.STICK), new ItemStack(Items.COPPER_NUGGET));
+		Arrow glider = new Arrow(level, 0.0D, 128.0D, 0.0D, floating, new ItemStack(Items.BOW));
+		boolean glide = Math.abs(glider.getGravity() - 0.025) < 1.0E-9
+			&& Math.abs(glider.getGravity() * 2 - 0.05) < 1.0E-9;
+		glider.discard();
+
+		// блейз: стрела горит, цель горит 10 с (200 тиков) вместо ванильных 100
+		ItemStack burning = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.COPPER_NUGGET));
+		Arrow fireArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, burning, new ItemStack(Items.BOW));
+		boolean lit = fireArrow.isOnFire();
+		Pig burnt = pig(level);
+		fireArrow.setDeltaMovement(1.0, 0.0, 0.0);
+		float before = burnt.getHealth();
+		hit(fireArrow, burnt);
+		boolean ignites = burnt.getRemainingFireTicks() >= 190 && burnt.getHealth() < before;
+		fireArrow.discard();
+		burnt.discard();
+
+		// аметист: подсветка 8 с
+		ItemStack glowing = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.AMETHYST_SHARD));
+		Arrow glowArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, glowing, new ItemStack(Items.BOW));
+		Pig seen = pig(level);
+		glowArrow.setDeltaMovement(1.0, 0.0, 0.0);
+		hit(glowArrow, seen);
+		boolean glows = seen.hasEffect(MobEffects.GLOWING)
+			&& seen.getEffect(MobEffects.GLOWING).getDuration() >= 150;
+		glowArrow.discard();
+		seen.discard();
+
+		// кость: отбрасывание 2 уровня (у ванильной стрелы без «Удара» толчка нет вовсе)
+		ItemStack bony = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.BONE), new ItemStack(Items.COPPER_NUGGET));
+		Arrow knockArrow = new Arrow(level, 0.0D, 128.0D, 0.0D, bony, new ItemStack(Items.BOW));
+		Pig pushed = pig(level);
+		knockArrow.setDeltaMovement(1.0, 0.0, 0.0);
+		hit(knockArrow, pushed);
+		double push = pushed.getDeltaMovement().horizontalDistance();
+		knockArrow.discard();
+		pushed.discard();
+
+		// кремень: поджигает блок, в который воткнулась (как огниво)
+		BlockPos stone = new BlockPos(0, 200, 0);
+		level.setBlock(stone, Blocks.STONE.defaultBlockState(), 3);
+		ItemStack flinty = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.FLINT));
+		Arrow flintArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, flinty, new ItemStack(Items.BOW));
+		hitBlock(flintArrow, new BlockHitResult(new Vec3(0.5, 201.0, 0.5), Direction.UP, stone, false));
+		boolean firePlaced = level.getBlockState(stone.above()).getBlock() instanceof BaseFireBlock;
+		level.removeBlock(stone.above(), false);
+		level.removeBlock(stone, false);
+		flintArrow.discard();
+
+		// алмазный наконечник теперь добирается до потолка пробивания
+		ItemStack sniper = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.DIAMOND));
+		boolean diamondPierce = FletcherArrows.pierceOf(sniper) == 3;
+
+		// лор: три строки чисел + строка на каждую часть со свойством; у бумаги и бамбука свойств нет
+		ItemStack described = FletcherArrows.build(
+			new ItemStack(Items.PHANTOM_MEMBRANE), new ItemStack(Items.BLAZE_ROD), new ItemStack(Items.FLINT));
+		ItemLore lore = described.get(DataComponents.LORE);
+		boolean loreLines = lore != null && lore.lines().size() == 6;
+		boolean noSpecialForCheap = FletcherArrows.specialLabelOf(new ItemStack(Items.BAMBOO)).isEmpty()
+			&& FletcherArrows.specialLabelOf(new ItemStack(Items.PAPER)).isEmpty()
+			&& FletcherArrows.specialLabelOf(new ItemStack(Items.STICK)).isEmpty()
+			&& !FletcherArrows.specialLabelOf(new ItemStack(Items.BLAZE_ROD)).isEmpty();
+
+		LOGGER.info("Fletcher: свойства — мембрана {}, блейз горит {}, цель горит {} тиков, аметист {}, "
+				+ "кость толчок {}, кремень огонь {}, алмаз пробивание {}, лор {}, без свойств у дешёвых {}",
+			ok(glide), ok(lit), burnt.getRemainingFireTicks(), ok(glows), push, ok(firePlaced),
+			ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap));
+		return glide && lit && ignites && glows && push > 0.5 && firePlaced && diamondPierce
+			&& loreLines && noSpecialForCheap;
+	}
+
+	/** Свинья-мишень в воздухе: по ней и проверяем попадание. */
+	private static Pig pig(ServerLevel level) {
+		Pig pig = EntityTypes.PIG.create(level, EntitySpawnReason.COMMAND);
+		pig.setPos(0.5D, 128.0D, 0.5D);
+		level.addFreshEntity(pig);
+		return pig;
+	}
+
+	private static void hit(Arrow arrow, LivingEntity target) throws ReflectiveOperationException {
+		Method onHit = AbstractArrow.class.getDeclaredMethod("onHitEntity", EntityHitResult.class);
+		onHit.setAccessible(true);
+		onHit.invoke(arrow, new EntityHitResult(target));
+	}
+
+	private static void hitBlock(Arrow arrow, BlockHitResult hit) throws ReflectiveOperationException {
+		Method onHit = AbstractArrow.class.getDeclaredMethod("onHitBlock", BlockHitResult.class);
+		onHit.setAccessible(true);
+		onHit.invoke(arrow, hit);
 	}
 
 	private static float drag(AbstractArrow arrow) throws ReflectiveOperationException {

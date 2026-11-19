@@ -42,6 +42,16 @@ public final class FletcherArrows {
 	public static final String KEY_DRAG = "drag";
 	public static final String KEY_DAMAGE = "damage";
 	public static final String KEY_PIERCE = "pierce";
+	/** Секунды горения цели (0 — обычные 5 от Flame). */
+	public static final String KEY_IGNITE = "ignite";
+	/** Своя гравитация стрелы (0 — ванильные 0.05). */
+	public static final String KEY_GRAVITY = "gravity";
+	/** Тики подсветки цели (0 — нет). */
+	public static final String KEY_GLOW = "glow";
+	/** 1 — поджигает блок, в который воткнулась. */
+	public static final String KEY_FIRE = "fire";
+	/** Сила отбрасывания в единицах зачарования «Удар» (2 уровня = 2.0). */
+	public static final String KEY_KNOCKBACK = "knockback";
 
 	/** Ванильный коэффициент инерции стрелы: {@code AbstractArrow.getAirDrag()}. */
 	public static final float BASE_DRAG = 0.99F;
@@ -60,9 +70,18 @@ public final class FletcherArrows {
 	 */
 	private static final float MAX_READ_DAMAGE = 6.5F;
 
+	/** Потолки чтения спецсвойств: NBT можно подделать, «горит вечность» не должно существовать. */
+	private static final float MAX_READ_IGNITE = 30.0F;
+	private static final float MIN_READ_GRAVITY = 0.005F;
+	private static final float VANILLA_GRAVITY = 0.05F;
+	private static final int MAX_READ_GLOW = 1200;
+	private static final float MAX_READ_KNOCKBACK = 4.0F;
+
 	private static final Map<Item, Part> FEATHERS = new HashMap<>();
 	private static final Map<Item, Part> SHAFTS = new HashMap<>();
 	private static final Map<Item, Part> HEADS = new HashMap<>();
+	/** Особые свойства: только у стоящих материалов, у «дешёвых» (бумага, бамбук) их нет. */
+	private static final Map<Item, Special> SPECIALS = new HashMap<>();
 	private static final List<Item> FEATHER_ITEMS;
 	private static final List<Item> SHAFT_ITEMS;
 	private static final List<Item> HEAD_ITEMS;
@@ -80,7 +99,7 @@ public final class FletcherArrows {
 		SHAFTS.put(Items.STICK, new Part(0.0F, 0.0F, 0, "палка"));
 		SHAFTS.put(Items.BAMBOO, new Part(-1.0F, 0.0015F, 0, "бамбук"));
 		SHAFTS.put(Items.BLAZE_ROD, new Part(1.0F, -0.0015F, 0, "огненный стержень"));
-		SHAFTS.put(Items.BONE, new Part(0.5F, 0.0005F, 0, "кость"));
+		SHAFTS.put(Items.BONE, new Part(0.0F, 0.0005F, 0, "кость"));
 
 		// наконечник: урон и пробивание, всё мелкое
 		HEADS.put(Items.FLINT, new Part(0.0F, 0.0F, 0, "кремень"));
@@ -88,7 +107,16 @@ public final class FletcherArrows {
 		HEADS.put(Items.IRON_NUGGET, new Part(1.0F, 0.0F, 1, "железо"));
 		HEADS.put(Items.GOLD_NUGGET, new Part(1.0F, 0.0F, 2, "золото"));
 		HEADS.put(Items.AMETHYST_SHARD, new Part(1.0F, 0.0020F, 0, "аметист"));
-		HEADS.put(Items.DIAMOND, new Part(2.5F, 0.0F, 2, "алмаз"));
+		HEADS.put(Items.DIAMOND, new Part(2.5F, 0.0F, 3, "алмаз"));
+
+		// Особые свойства. Цифры — не «на глаз»: 10 с горения вдвое длиннее ванильных 5 от Flame,
+		// 2.0 отбрасывания — ровно «Удар II» (base 1.0 + 1.0 за уровень), 0.025 гравитации — половина
+		// ванильных 0.05, подсветка 160 тиков = 8 с.
+		SPECIALS.put(Items.BLAZE_ROD, new Special(10.0F, 0.0F, 0, false, 0.0F, "Поджигает 10 с"));
+		SPECIALS.put(Items.PHANTOM_MEMBRANE, new Special(0.0F, 0.025F, 0, false, 0.0F, "Почти не падает"));
+		SPECIALS.put(Items.AMETHYST_SHARD, new Special(0.0F, 0.0F, 160, false, 0.0F, "Подсвечивает 8 с"));
+		SPECIALS.put(Items.FLINT, new Special(0.0F, 0.0F, 0, true, 0.0F, "Поджигает блок"));
+		SPECIALS.put(Items.BONE, new Special(0.0F, 0.0F, 0, false, 2.0F, "Отбрасывает как «Удар II»"));
 
 		FEATHER_ITEMS = List.copyOf(FEATHERS.keySet());
 		SHAFT_ITEMS = List.copyOf(SHAFTS.keySet());
@@ -105,6 +133,21 @@ public final class FletcherArrows {
 	}
 
 	public record Part(float damage, float drag, int pierce, String label) {
+	}
+
+	/**
+	 * Особое свойство части. Пустые поля означают «обычная часть» — {@link #NONE}.
+	 * <p>
+	 * Значения попадают в {@code custom_data.fletcher} готовой стрелы, чтобы миксин не лазил
+	 * в таблицы предметов на каждый тик, а читал уже посчитанное (и зажимал при чтении).
+	 */
+	public record Special(float ignite, float gravity, int glow, boolean fire, float knockback, String label) {
+		public static final Special NONE = new Special(0.0F, 0.0F, 0, false, 0.0F, "");
+
+		public boolean isEmpty() {
+			return this.ignite <= 0.0F && this.gravity <= 0.0F && this.glow <= 0 && !this.fire
+				&& this.knockback <= 0.0F;
+		}
 	}
 
 	/**
@@ -195,6 +238,19 @@ public final class FletcherArrows {
 		};
 	}
 
+	/** Особое свойство предмета; у обычной части — {@link Special#NONE}. */
+	public static Special specialOf(ItemStack stack) {
+		if (stack.isEmpty()) {
+			return Special.NONE;
+		}
+		return SPECIALS.getOrDefault(stack.getItem(), Special.NONE);
+	}
+
+	/** Подпись особого свойства — для подсказки в столе; пустая строка, если свойства нет. */
+	public static String specialLabelOf(ItemStack stack) {
+		return specialOf(stack).label();
+	}
+
 	/**
 	 * Собирает стрелу из трёх слотов по порядку: оперение, древко, наконечник.
 	 * Любой пустой или чужой слот — {@link ItemStack#EMPTY}.
@@ -211,6 +267,7 @@ public final class FletcherArrows {
 		float damage = Math.min(MAX_READ_DAMAGE,
 			Math.max(MIN_DAMAGE, BASE_DAMAGE + feather.damage() + shaft.damage() + head.damage()));
 		int pierce = Mth.clamp(feather.pierce() + shaft.pierce() + head.pierce(), 0, MAX_PIERCE);
+		Special special = combine(specialOf(featherStack), specialOf(shaftStack), specialOf(headStack));
 
 		ItemStack out = new ItemStack(Items.ARROW, ARROWS_PER_CRAFT);
 
@@ -218,19 +275,59 @@ public final class FletcherArrows {
 		tag.putFloat(KEY_DRAG, drag);
 		tag.putFloat(KEY_DAMAGE, damage);
 		tag.putInt(KEY_PIERCE, pierce);
+		// особые ключи пишем только когда свойство есть: старая стрела без них читается как обычная
+		if (special.ignite() > 0.0F) {
+			tag.putFloat(KEY_IGNITE, special.ignite());
+		}
+		if (special.gravity() > 0.0F) {
+			tag.putFloat(KEY_GRAVITY, special.gravity());
+		}
+		if (special.glow() > 0) {
+			tag.putInt(KEY_GLOW, special.glow());
+		}
+		if (special.fire()) {
+			tag.putBoolean(KEY_FIRE, true);
+		}
+		if (special.knockback() > 0.0F) {
+			tag.putFloat(KEY_KNOCKBACK, special.knockback());
+		}
 		CustomData.update(DataComponents.CUSTOM_DATA, out, root -> root.put(NBT_ROOT, tag));
 
 		out.set(DataComponents.CUSTOM_NAME, Component.literal("Стрела · " + head.label() + " / " + feather.label())
-			.withStyle(head.pierce() > 0 ? ChatFormatting.AQUA : ChatFormatting.WHITE));
-		out.set(DataComponents.LORE, new ItemLore(List.of(
-			Component.literal("Урон: " + damagePercent(damage)).withStyle(ChatFormatting.GRAY),
-			Component.literal("Дальность: " + rangePercent(drag)).withStyle(ChatFormatting.GRAY),
-			Component.literal("Пробивание: " + pierce).withStyle(ChatFormatting.GRAY)
-		)));
+			.withStyle(head.pierce() > 0 || special.glow() > 0 ? ChatFormatting.AQUA : ChatFormatting.WHITE));
+		List<Component> lore = new ArrayList<>();
+		lore.add(Component.literal("Урон: " + damagePercent(damage)).withStyle(ChatFormatting.GRAY));
+		lore.add(Component.literal("Дальность: " + rangePercent(drag)).withStyle(ChatFormatting.GRAY));
+		lore.add(Component.literal("Пробивание: " + pierce).withStyle(ChatFormatting.GRAY));
+		for (Special used : new Special[]{specialOf(featherStack), specialOf(shaftStack), specialOf(headStack)}) {
+			if (!used.isEmpty()) {
+				lore.add(Component.literal(used.label()).withStyle(ChatFormatting.GOLD));
+			}
+		}
+		out.set(DataComponents.LORE, new ItemLore(lore));
 		if (pierce > 0) {
 			out.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
 		}
 		return out;
+	}
+
+	/** Сводит особые свойства трёх частей: горение/подсветка/отбрасывание — сильнейшее, гравитация — минимальная. */
+	private static Special combine(Special first, Special second, Special third) {
+		float ignite = 0.0F;
+		float gravity = 0.0F;
+		int glow = 0;
+		boolean fire = false;
+		float knockback = 0.0F;
+		for (Special part : new Special[]{first, second, third}) {
+			ignite = Math.max(ignite, part.ignite());
+			glow = Math.max(glow, part.glow());
+			knockback = Math.max(knockback, part.knockback());
+			fire |= part.fire();
+			if (part.gravity() > 0.0F) {
+				gravity = gravity <= 0.0F ? part.gravity() : Math.min(gravity, part.gravity());
+			}
+		}
+		return new Special(ignite, gravity, glow, fire, knockback, "");
 	}
 
 	/** Коэффициент инерции конкретной стрелы; 0 — если стрела ванильная. */
@@ -268,6 +365,60 @@ public final class FletcherArrows {
 			return 0;
 		}
 		return Mth.clamp(tag.getIntOr(KEY_PIERCE, 0), 0, MAX_PIERCE);
+	}
+
+	/** Секунды горения цели от огненного древка; 0 — обычные 5 от Flame. */
+	public static float igniteOf(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		if (tag == null) {
+			return 0.0F;
+		}
+		float value = tag.getFloatOr(KEY_IGNITE, 0.0F);
+		if (!Float.isFinite(value) || value <= 0.0F) {
+			return 0.0F;
+		}
+		return Math.min(value, MAX_READ_IGNITE);
+	}
+
+	/** Своя гравитация стрелы; 0 — ванильные 0.05. */
+	public static float gravityOf(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		if (tag == null) {
+			return 0.0F;
+		}
+		float value = tag.getFloatOr(KEY_GRAVITY, 0.0F);
+		if (!Float.isFinite(value) || value <= 0.0F || value >= VANILLA_GRAVITY) {
+			return 0.0F;
+		}
+		return Mth.clamp(value, MIN_READ_GRAVITY, VANILLA_GRAVITY);
+	}
+
+	/** Тики подсветки цели; 0 — нет. */
+	public static int glowOf(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		if (tag == null) {
+			return 0;
+		}
+		return Mth.clamp(tag.getIntOr(KEY_GLOW, 0), 0, MAX_READ_GLOW);
+	}
+
+	/** Поджигает ли стрела блок, в который воткнулась. */
+	public static boolean setsFire(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		return tag != null && tag.getBooleanOr(KEY_FIRE, false);
+	}
+
+	/** Сила отбрасывания цели в единицах «Удара»; 0 — только ванильное. */
+	public static float knockbackOf(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		if (tag == null) {
+			return 0.0F;
+		}
+		float value = tag.getFloatOr(KEY_KNOCKBACK, 0.0F);
+		if (!Float.isFinite(value) || value <= 0.0F) {
+			return 0.0F;
+		}
+		return Math.min(value, MAX_READ_KNOCKBACK);
 	}
 
 	/** Наша ли это стрела (маркер {@code fletcher} в custom_data). */

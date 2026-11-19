@@ -18,6 +18,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.level.block.Blocks;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -95,12 +96,20 @@ public class FletcherMenu extends HopperMenu {
 		return item;
 	}
 
-	/** Подсказка подписана ролью в лоре: имя предмета остаётся, слот объяснён второй строкой. */
+	/**
+	 * Подсказка подписана ролью в лоре: имя предмета остаётся, слот объяснён второй строкой.
+	 * Третья строка — особое свойство, если у материала оно есть: у «дешёвых» (бумага, бамбук) её нет.
+	 */
 	private static ItemStack hint(Item item, FletcherArrows.Role role) {
 		ItemStack stack = new ItemStack(item);
-		stack.set(DataComponents.LORE, new ItemLore(List.of(
-			Component.translatableWithFallback("fletcher.hint." + role.key(), "Сюда: " + role.label())
-				.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC))));
+		List<Component> lore = new ArrayList<>();
+		lore.add(Component.translatableWithFallback("fletcher.hint." + role.key(), "Сюда: " + role.label())
+			.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
+		String special = FletcherArrows.specialLabelOf(stack);
+		if (!special.isEmpty()) {
+			lore.add(Component.literal(special).withStyle(ChatFormatting.GOLD));
+		}
+		stack.set(DataComponents.LORE, new ItemLore(lore));
 		return stack;
 	}
 

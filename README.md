@@ -55,22 +55,55 @@ damage in the tooltip only confused, because real damage is base × impact speed
 | shaft | stick | 0 | 0 | 0 |
 | | bamboo | −1 | +0.0015 | 0 |
 | | blaze rod | +1 | −0.0015 | 0 |
-| | bone | +0.5 | +0.0005 | 0 |
+| | bone | 0 | +0.0005 | 0 |
 | head | flint | 0 | 0 | 0 |
 | | copper nugget | +0.5 | 0 | 0 |
 | | iron nugget | +1 | 0 | 1 |
 | | gold nugget | +1 | 0 | 2 |
 | | amethyst shard | +1 | +0.0020 | 0 |
-| | diamond | +2.5 | 0 | 2 |
+| | diamond | +2.5 | 0 | 3 |
+
+## Special properties
+
+Numbers alone made one part strictly better than another (gold was the cheap piercing, bone beat the
+stick for free). Five materials now do something a number cannot, and the budget parts (paper, bamboo,
+stick) deliberately get nothing — they stay the cheap filler:
+
+| part | item | effect |
+|---|---|---|
+| feather | phantom membrane | gravity 0.025 instead of 0.05 — the arrow glides |
+| shaft | blaze rod | the arrow burns and sets the target on fire for 10 s, twice Flame's 5 s |
+| shaft | bone | knockback equal to Punch II (its +0.5 damage is gone — it is a trade, not a bonus) |
+| head | flint | ignites the block it sticks into, like flint and steel |
+| head | amethyst shard | the target glows for 8 s — you can see it through walls and track it |
+| head | diamond | piercing 3 (the ceiling that used to be unreachable) |
+
+Specials stack: membrane + blaze rod is a gliding fire arrow, amethyst + piercing 3 lights up a whole
+line of mobs. They travel in the arrow's own `custom_data.fletcher` (`ignite`, `gravity`, `glow`,
+`fire`, `knockback`), so an old arrow without those keys is simply a plain fletcher arrow, and every
+read is clamped (ignite ≤ 30 s, gravity 0.005..0.05, glow ≤ 1200 ticks, knockback ≤ 4).
+
+Three things are deliberately vanilla-shaped rather than stronger:
+
+* **fire** — the arrow must be burning for vanilla to ignite the target at all, and `clearFire` in the
+  arrow's tick puts it out in water or rain, so a fire arrow is not a permanent upgrade;
+* **flint fire on blocks** — the arrow places fire exactly where flint and steel would
+  (`BaseFireBlock.canBePlacedAt` → `getState` → `setBlock(..., 11)` + the same sound). Spread still
+  obeys `doFireTick`, so a server that turned fire spread off does not burn down;
+* **knockback** — computed with vanilla's own formula (`direction × force × 0.6 × (1 − knockback
+  resistance))`, so Punch on the bow stacks with it instead of being replaced.
+
+## Mechanics
 
 The range figure in the lore comes from a flight run, not from a gravity-free formula (that one
 claimed +200 % where the real gain was +30 %): 0.991 → +4 %, 0.9925 → +10 %, 0.9955 → +26 %,
 0.997 → +35 %, down to −36 % at 0.975.
 
 The server owns the numbers: a mixin on `AbstractArrow.getAirDrag()` (inertia → range; vanilla uses
-another method in water, nothing is overridden there) plus both constructors and
-`setPickupItemStack` (base damage via `setBaseDamage`, piercing via `@Invoker("setPierceLevel")`).
-Inertia is cached in a field because `getAirDrag` runs on every arrow every tick and reading the
+another method in water, nothing is overridden there), `getDefaultGravity()` (which `Entity.applyGravity`
+reaches through `getGravity()`), `onHitEntity`/`onHitBlock` for the specials, plus both constructors
+and `setPickupItemStack` (base damage via `setBaseDamage`, piercing via `@Invoker("setPierceLevel")`).
+Inertia and gravity are cached in fields because both run on every arrow every tick and reading the
 component copied a tag each time. Crossbow Piercing is never weakened (`max`, not overwrite). The
 client does not read these values, it only interpolates the position the server sends, so a forged
 arrow can visually lag the real hitbox — the price of server-only.
@@ -104,6 +137,12 @@ kept, shift-click drain, no ghost items), the click paths (`F` into the right an
 falling back to the vanilla `0.99 / 2.0`, the best set stored and read back as 6.5 (the ceiling guard reads
 the raw tag, so a growing part table cannot pass it silently), and a stack rewritten to a plain arrow
 dropping the fletcher damage back to 2.0.
+
+The specials are exercised through the real `onHitEntity`/`onHitBlock`, not through a copy of their
+logic: a membrane arrow reports gravity 0.025, a blaze rod arrow is on fire and leaves a pig burning
+for 200 ticks, an amethyst arrow gives the pig 8 s of Glowing, a bone arrow pushes it, a flint arrow
+sets the block it hits on fire, a diamond arrow reports piercing 3, the lore of a three-special arrow
+has six lines, and bamboo/paper/stick report no special at all.
 
 ## Install
 
