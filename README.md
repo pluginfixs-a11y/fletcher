@@ -15,7 +15,7 @@ not know the id. The title is `{"translate": "fletcher.table", "fallback": "Ст
 |---|---|---|
 | 0 | feather | feather, paper, leather, phantom membrane |
 | 1 | shaft | stick, bamboo, blaze rod, bone |
-| 2 | head | flint, copper/iron/gold nugget, amethyst shard, diamond |
+| 2 | head | flint, copper/iron/gold nugget, iron ingot, amethyst shard, diamond |
 | 3 | locked (the gap in the hopper layout) | — |
 | 4 | result: 4 arrows per set | — |
 
@@ -38,7 +38,7 @@ item. Drag distribution into the table works like a chest because of the same ru
 ## The arrow
 
 The result is a plain `minecraft:arrow` with components: `custom_data.fletcher = {drag, damage,
-pierce}`, `custom_name`, `lore` (a vanilla client shows the numbers too) and
+pierce}` plus the specials, `custom_name`, `lore` (a vanilla client shows the numbers too) and
 `enchantment_glint_override` when it pierces. A custom item id is impossible server-side: the client
 would draw a missing texture.
 
@@ -59,6 +59,7 @@ damage in the tooltip only confused, because real damage is base × impact speed
 | head | flint | 0 | 0 | 0 |
 | | copper nugget | +0.5 | 0 | 0 |
 | | iron nugget | +1 | 0 | 1 |
+| | iron ingot | −1 | 0 | 0 |
 | | gold nugget | +1 | 0 | 2 |
 | | amethyst shard | +1 | +0.0020 | 0 |
 | | diamond | +2.5 | 0 | 3 |
@@ -66,7 +67,7 @@ damage in the tooltip only confused, because real damage is base × impact speed
 ## Special properties
 
 Numbers alone made one part strictly better than another (gold was the cheap piercing, bone beat the
-stick for free). Five materials now do something a number cannot, and the budget parts (paper, bamboo,
+stick for free). Seven materials now do something a number cannot, and the budget parts (paper, bamboo,
 stick) deliberately get nothing — they stay the cheap filler:
 
 | part | item | effect |
@@ -76,13 +77,15 @@ stick) deliberately get nothing — they stay the cheap filler:
 | shaft | bone | knockback equal to Punch II (its +0.5 damage is gone — it is a trade, not a bonus) |
 | head | flint | ignites the block it sticks into, like flint and steel |
 | head | amethyst shard | the target glows for 8 s — you can see it through walls and track it |
+| head | iron ingot | breaks the block it hits however hard (obsidian, ores) and is consumed |
 | head | diamond | piercing 3 (the ceiling that used to be unreachable) |
 
 Specials stack: membrane + blaze rod is a gliding fire arrow, amethyst + piercing 3 lights up a whole
 line of mobs. They travel in the arrow's own `custom_data.fletcher` (`ignite`, `gravity`, `glow`,
-`fire`, `knockback`), so an old arrow without those keys is simply a plain fletcher arrow, and every
-read is clamped to what an honest arrow can do (ignite ≤ 30 s, gravity 0.005..0.05, glow ≤ 1200 ticks,
-knockback ≤ 2 = Punch II — Punch on the bow adds on top by itself).
+`fire`, `break`, `knockback`), so an old arrow without those keys is simply a plain fletcher arrow, and
+every number read is clamped to what an honest arrow can do (ignite ≤ 30 s, gravity 0.005..0.05, glow ≤
+1200 ticks, knockback ≤ 2 = Punch II — Punch on the bow adds on top by itself). The two flags (`fire`,
+`break`) have nothing to clamp: forging them takes `/give` or creative, i.e. an operator.
 
 On-hit specials hang off `doPostHurtEffects`, which vanilla calls only inside the branch where the
 damage actually went through. So the second arrow of a multishot volley, an arrow stopped by i-frames,
@@ -102,6 +105,16 @@ Three things are deliberately vanilla-shaped rather than stronger:
 * **knockback** — computed with vanilla's own formula (`direction × force × 0.6 × (1 − knockback
   resistance))`, so Punch on the bow stacks with it instead of being replaced, and a straight-down
   hit pushes nothing, as in vanilla.
+
+The iron ingot is the one deliberate exception to "vanilla-shaped rather than stronger": the arrow
+breaks the block it hits whatever its hardness (obsidian, ancient debris, ores) and is consumed doing
+it — a mining tool that costs an arrow per block and gives up half the damage. What the game itself
+refuses to break it refuses too: a negative destroy speed (bedrock, barrier, command and structure
+blocks) means the arrow just sticks like a normal one and is not spent. Drops are the block's own
+(`destroyBlock(..., true)`), so an ore still drops its item; a block without a drop table simply
+vanishes. It still needs a player owner (a skeleton's or dispenser's arrow only sticks) and still asks
+`mayInteract`/`blockActionRestricted`, so adventure mode, spawn protection and the world border refuse
+it the way they refuse a player's break.
 
 ## Mechanics
 
@@ -152,9 +165,15 @@ The specials are exercised through the real `onHitEntity`/`onHitBlock`, not thro
 logic: a membrane arrow reports gravity 0.025, a blaze rod arrow is on fire and leaves a pig burning
 for 200 ticks, an amethyst arrow gives the pig 8 s of Glowing, a bone arrow pushes it further than a
 plain arrow does, a second arrow into the same pig's i-frames applies nothing, a flint arrow sets the
-block it hits on fire while an ownerless one does not, a diamond arrow reports piercing 3, the lore of
-a three-special arrow has six lines, forged `ignite/gravity/glow/knockback` clamp to 30 / 0.005 / 1200 /
-2, and bamboo/paper/stick report no special at all.
+block it hits on fire while an ownerless one does not, an iron ingot arrow reports −50 % damage
+(tooltip included), breaks obsidian and is spent, leaves bedrock alone and unspent, refuses a
+breakable block without a player owner, outside the world border and in adventure mode with an empty
+hand, and does all of it on a real flight — a ticked arrow, not only a direct `onHitBlock` call.
+A diamond arrow reports piercing 3, the lore of a three-special arrow has six lines, forged
+`ignite/gravity/glow/knockback` clamp to 30 / 0.005 / 1200 / 2, and bamboo/paper/stick report no
+special at all. The item the broken block drops is not asserted: the self-test runs before the first
+tick, when dropped item entities are not visible yet, so only the block's disappearance and the
+arrow's consumption are checked; the drop itself is vanilla `destroyBlock(..., true)`.
 
 ## Install
 

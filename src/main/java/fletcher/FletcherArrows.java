@@ -50,6 +50,8 @@ public final class FletcherArrows {
 	public static final String KEY_GLOW = "glow";
 	/** 1 — поджигает блок, в который воткнулась. */
 	public static final String KEY_FIRE = "fire";
+	/** 1 — ломает блок, в который воткнулась (неломаемое — нет), и расходуется. */
+	public static final String KEY_BREAK = "break";
 	/** Сила отбрасывания в единицах зачарования «Удар» (2 уровня = 2.0). */
 	public static final String KEY_KNOCKBACK = "knockback";
 
@@ -106,6 +108,7 @@ public final class FletcherArrows {
 		HEADS.put(Items.FLINT, new Part(0.0F, 0.0F, 0, "кремень"));
 		HEADS.put(Items.COPPER_NUGGET, new Part(0.5F, 0.0F, 0, "медь"));
 		HEADS.put(Items.IRON_NUGGET, new Part(1.0F, 0.0F, 1, "железо"));
+		HEADS.put(Items.IRON_INGOT, new Part(-1.0F, 0.0F, 0, "железный слиток"));
 		HEADS.put(Items.GOLD_NUGGET, new Part(1.0F, 0.0F, 2, "золото"));
 		HEADS.put(Items.AMETHYST_SHARD, new Part(1.0F, 0.0020F, 0, "аметист"));
 		HEADS.put(Items.DIAMOND, new Part(2.5F, 0.0F, 3, "алмаз"));
@@ -113,11 +116,14 @@ public final class FletcherArrows {
 		// Особые свойства. Цифры — не «на глаз»: 10 с горения вдвое длиннее ванильных 5 от Flame,
 		// 2.0 отбрасывания — ровно «Удар II» (base 1.0 + 1.0 за уровень), 0.025 гравитации — половина
 		// ванильных 0.05, подсветка 160 тиков = 8 с.
-		SPECIALS.put(Items.BLAZE_ROD, new Special(10.0F, 0.0F, 0, false, 0.0F, "Поджигает 10 с"));
-		SPECIALS.put(Items.PHANTOM_MEMBRANE, new Special(0.0F, 0.025F, 0, false, 0.0F, "Почти не падает"));
-		SPECIALS.put(Items.AMETHYST_SHARD, new Special(0.0F, 0.0F, 160, false, 0.0F, "Подсвечивает 8 с"));
-		SPECIALS.put(Items.FLINT, new Special(0.0F, 0.0F, 0, true, 0.0F, "Поджигает блок"));
-		SPECIALS.put(Items.BONE, new Special(0.0F, 0.0F, 0, false, 2.0F, "Отбрасывает как «Удар II»"));
+		SPECIALS.put(Items.BLAZE_ROD, new Special(10.0F, 0.0F, 0, false, 0.0F, false, "Поджигает 10 с"));
+		SPECIALS.put(Items.PHANTOM_MEMBRANE, new Special(0.0F, 0.025F, 0, false, 0.0F, false, "Почти не падает"));
+		SPECIALS.put(Items.AMETHYST_SHARD, new Special(0.0F, 0.0F, 160, false, 0.0F, false, "Подсвечивает 8 с"));
+		SPECIALS.put(Items.FLINT, new Special(0.0F, 0.0F, 0, true, 0.0F, false, "Поджигает блок"));
+		SPECIALS.put(Items.BONE, new Special(0.0F, 0.0F, 0, false, 2.0F, false, "Отбрасывает как «Удар II»"));
+		// слиток стоит вдвое дешевле урона (-1.0 = половина ванильной базы) и ломает любой ломаемый
+		// блок, не глядя на прочность: цена — сама стрела, после попадания её не подобрать
+		SPECIALS.put(Items.IRON_INGOT, new Special(0.0F, 0.0F, 0, false, 0.0F, true, "Ломает блок, расходуясь"));
 
 		FEATHER_ITEMS = List.copyOf(FEATHERS.keySet());
 		SHAFT_ITEMS = List.copyOf(SHAFTS.keySet());
@@ -142,12 +148,13 @@ public final class FletcherArrows {
 	 * Значения попадают в {@code custom_data.fletcher} готовой стрелы, чтобы миксин не лазил
 	 * в таблицы предметов на каждый тик, а читал уже посчитанное (и зажимал при чтении).
 	 */
-	public record Special(float ignite, float gravity, int glow, boolean fire, float knockback, String label) {
-		public static final Special NONE = new Special(0.0F, 0.0F, 0, false, 0.0F, "");
+	public record Special(float ignite, float gravity, int glow, boolean fire, float knockback, boolean breaksBlock,
+		String label) {
+		public static final Special NONE = new Special(0.0F, 0.0F, 0, false, 0.0F, false, "");
 
 		public boolean isEmpty() {
 			return this.ignite <= 0.0F && this.gravity <= 0.0F && this.glow <= 0 && !this.fire
-				&& this.knockback <= 0.0F;
+				&& this.knockback <= 0.0F && !this.breaksBlock;
 		}
 	}
 
@@ -289,6 +296,9 @@ public final class FletcherArrows {
 		if (special.fire()) {
 			tag.putBoolean(KEY_FIRE, true);
 		}
+		if (special.breaksBlock()) {
+			tag.putBoolean(KEY_BREAK, true);
+		}
 		if (special.knockback() > 0.0F) {
 			tag.putFloat(KEY_KNOCKBACK, special.knockback());
 		}
@@ -322,16 +332,18 @@ public final class FletcherArrows {
 		int glow = 0;
 		boolean fire = false;
 		float knockback = 0.0F;
+		boolean breaksBlock = false;
 		for (Special part : new Special[]{first, second, third}) {
 			ignite = Math.max(ignite, part.ignite());
 			glow = Math.max(glow, part.glow());
 			knockback = Math.max(knockback, part.knockback());
 			fire |= part.fire();
+			breaksBlock |= part.breaksBlock();
 			if (part.gravity() > 0.0F) {
 				gravity = gravity <= 0.0F ? part.gravity() : Math.min(gravity, part.gravity());
 			}
 		}
-		return new Special(ignite, gravity, glow, fire, knockback, "");
+		return new Special(ignite, gravity, glow, fire, knockback, breaksBlock, "");
 	}
 
 	/** Коэффициент инерции конкретной стрелы; 0 — если стрела ванильная. */
@@ -410,6 +422,12 @@ public final class FletcherArrows {
 	public static boolean setsFire(ItemStack arrow) {
 		CompoundTag tag = dataOf(arrow);
 		return tag != null && tag.getBooleanOr(KEY_FIRE, false);
+	}
+
+	/** Ломает ли стрела блок, в который воткнулась (неломаемое — нет); тогда же она и расходуется. */
+	public static boolean breaksBlocks(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		return tag != null && tag.getBooleanOr(KEY_BREAK, false);
 	}
 
 	/** Сила отбрасывания цели в единицах «Удара»; 0 — только ванильное. */

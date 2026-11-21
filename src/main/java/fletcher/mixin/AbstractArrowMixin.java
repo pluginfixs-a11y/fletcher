@@ -54,6 +54,8 @@ public abstract class AbstractArrowMixin {
 	@Unique
 	private boolean fletcher$fire;
 	@Unique
+	private boolean fletcher$breaks;
+	@Unique
 	private float fletcher$knockback;
 	@Unique
 	private boolean fletcher$applied;
@@ -163,6 +165,44 @@ public abstract class AbstractArrowMixin {
 			level.getRandom().nextFloat() * 0.4F + 0.8F);
 	}
 
+	/**
+	 * Железный слиток: стрела ломает блок, в который воткнулась, без инструмента и не глядя на прочность —
+	 * обсидиан, древние обломки, руды. Неломаемое не берёт: у бедрока, барьера, командного и
+	 * структурного блока скорость разрушения отрицательная, и кирка их тоже не берёт. Плата — сама
+	 * стрела: после попадания она уничтожается, подобрать её нельзя.
+	 * <p>
+	 * Без игрока-владельца (скелет, раздатчик) и там, где игроку нельзя ломать (приключение,
+	 * спавн-защита, граница мира), блок остаётся целым — стрела тогда просто втыкается, как обычная,
+	 * и остаётся подбираемой: платить за несостоявшийся взлом нечем.
+	 */
+	@Inject(method = "onHitBlock", at = @At("RETURN"))
+	private void fletcher$breakBlock(BlockHitResult hit, CallbackInfo ci) {
+		if (!this.fletcher$breaks) {
+			return;
+		}
+		AbstractArrow self = (AbstractArrow) (Object) this;
+		if (!(self.level() instanceof ServerLevel level)
+			|| !(self.getOwner() instanceof ServerPlayer owner)) {
+			return;
+		}
+		// те же проверки, что у ванильного разбивания игроком: приключение, спавн-защита, граница мира.
+		// До чтения блока — за границей позиция может быть вне мира, там состояния блока просто нет.
+		BlockPos pos = hit.getBlockPos();
+		if (!level.mayInteract(owner, pos) || owner.blockActionRestricted(level, pos, owner.gameMode())) {
+			return;
+		}
+		// неломаемое отсекаем по отрицательной скорости разрушения: destroyBlock прочность не проверяет
+		// вообще, поэтому без этой строки стрела ломала бы бедрок
+		if (level.getBlockState(pos).getDestroySpeed(level, pos) < 0.0F) {
+			return;
+		}
+		// dropResources=true: блок выпадает так же, как от кирки; прочность destroyBlock не смотрит,
+		// поэтому обсидиан ломается с одного попадания. Стрела расходуется только если блок исчез.
+		if (level.destroyBlock(pos, true, self, 512)) {
+			self.discard();
+		}
+	}
+
 	@Unique
 	private void fletcher$applySpec() {
 		AbstractArrow self = (AbstractArrow) (Object) this;
@@ -173,6 +213,7 @@ public abstract class AbstractArrowMixin {
 			this.fletcher$ignite = 0.0F;
 			this.fletcher$glow = 0;
 			this.fletcher$fire = false;
+			this.fletcher$breaks = false;
 			this.fletcher$knockback = 0.0F;
 			// стек переписали на обычную стрелу (креатив, /data, чужой мод): возвращаем ванильную базу,
 			// иначе наш урон остался бы навсегда — но только если мы его сами и ставили, иначе
@@ -189,6 +230,7 @@ public abstract class AbstractArrowMixin {
 		this.fletcher$ignite = FletcherArrows.igniteOf(arrow);
 		this.fletcher$glow = FletcherArrows.glowOf(arrow);
 		this.fletcher$fire = FletcherArrows.setsFire(arrow);
+		this.fletcher$breaks = FletcherArrows.breaksBlocks(arrow);
 		this.fletcher$knockback = FletcherArrows.knockbackOf(arrow);
 		self.setBaseDamage(FletcherArrows.baseDamageOf(arrow));
 		// огненное древко: стрела должна гореть сама, иначе ваниль не подожжёт цель.

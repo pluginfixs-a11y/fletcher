@@ -21,6 +21,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.BlockHitResult;
@@ -443,6 +444,14 @@ public final class SelfTest {
 		double push;
 		boolean firePlaced;
 		boolean fireRespectsOwner;
+		boolean ironHalves;
+		boolean ironBreaks;
+		boolean ironSpends;
+		boolean ironSparesUnbreakable;
+		boolean ironRespectsOwner;
+		boolean ironRespectsBorder;
+		boolean ironRespectsAdventure;
+		boolean ironFlight;
 		boolean noEffectInIFrames;
 		boolean ownerlessBurns;
 		boolean noDownPush;
@@ -570,6 +579,77 @@ public final class SelfTest {
 			fireRespectsOwner = !(level.getBlockState(stone.above()).getBlock() instanceof BaseFireBlock);
 			orphan.discard();
 
+			// железный слиток: -50% урона, зато ломает твёрдый блок (обсидиан) и расходуется.
+			// Неломаемое (отрицательная скорость разрушения: бедрок, барьер) не берёт — как и кирка —
+			// и тогда просто втыкается, как обычная стрела: платить стрелой не за что.
+			ItemStack crushing = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_INGOT));
+			Arrow breaker = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+			breaker.setOwner(owner);
+			ItemLore crushingLore = crushing.get(DataComponents.LORE);
+			ironHalves = Math.abs(damage(breaker) - 1.0D) < 1.0E-6D
+				&& crushingLore != null
+				&& "Урон: -50 %".equals(crushingLore.lines().getFirst().getString());
+			level.setBlock(stone, Blocks.OBSIDIAN.defaultBlockState(), 3);
+			hitBlock(breaker, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			ironBreaks = level.getBlockState(stone).isAir();
+			ironSpends = breaker.isRemoved();
+
+			// бедрок: блок цел, стрела не израсходована — её подберут и выстрелят снова
+			level.setBlock(stone, Blocks.BEDROCK.defaultBlockState(), 3);
+			Arrow unbreakable = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+			unbreakable.setOwner(owner);
+			hitBlock(unbreakable, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			ironSparesUnbreakable = level.getBlockState(stone).is(Blocks.BEDROCK)
+				&& !unbreakable.isRemoved();
+			unbreakable.discard();
+
+			// без владельца (скелет, раздатчик) не ломается и обычный блок — иначе мир гриферили бы мобы.
+			// Проверяем обсидианом, а не бедроком: тот цел и так, и проверка ничего бы не доказывала.
+			level.setBlock(stone, Blocks.OBSIDIAN.defaultBlockState(), 3);
+			Arrow unownedBreaker = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+			hitBlock(unownedBreaker, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			ironRespectsOwner = level.getBlockState(stone).is(Blocks.OBSIDIAN)
+				&& !unownedBreaker.isRemoved();
+			unownedBreaker.discard();
+
+			// защита: снаружи границы мира (та же ветка mayInteract, что и спавн-защита) и в приключении
+			// с пустой рукой (blockActionRestricted) блок остаётся целым, стрела — подбираемой
+			double borderSize = level.getWorldBorder().getSize();
+			level.getWorldBorder().setSize(100.0D);
+			level.setBlock(stone, Blocks.OBSIDIAN.defaultBlockState(), 3);
+			Arrow borderArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+			borderArrow.setOwner(owner);
+			hitBlock(borderArrow, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			ironRespectsBorder = level.getBlockState(stone).is(Blocks.OBSIDIAN) && !borderArrow.isRemoved();
+			borderArrow.discard();
+			level.getWorldBorder().setSize(borderSize);
+
+			GameType gameModeBefore = owner.gameMode();
+			owner.setGameMode(GameType.ADVENTURE);
+			level.setBlock(stone, Blocks.OBSIDIAN.defaultBlockState(), 3);
+			Arrow adventureArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+			adventureArrow.setOwner(owner);
+			hitBlock(adventureArrow, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			ironRespectsAdventure = level.getBlockState(stone).is(Blocks.OBSIDIAN)
+				&& !adventureArrow.isRemoved();
+			adventureArrow.discard();
+			owner.setGameMode(gameModeBefore);
+
+			// настоящий полёт: проверяется не только прямой вызов onHitBlock, но и то, что стрела
+			// долетает сама, ломает блок и исчезает в тике попадания
+			level.setBlock(stone, Blocks.OBSIDIAN.defaultBlockState(), 3);
+			Arrow flying = new Arrow(level, 1000.5D, 206.0D, 1000.5D, crushing, new ItemStack(Items.BOW));
+			flying.setOwner(owner);
+			flying.shoot(0.0D, -1.0D, 0.0D, 1.5F, 0.0F);
+			for (int i = 0; i < 20 && !flying.isRemoved(); i++) {
+				flying.tick();
+			}
+			ironFlight = level.getBlockState(stone).isAir() && flying.isRemoved();
+
+			// дроп из таблицы лута здесь не проверяется: самопроверка идёт до первого тика, когда
+			// секции сущностей ещё не онбордены (даже свинья-канарейка в этом чанке не видна)
+
 			// алмазный наконечник теперь добирается до потолка пробивания
 			ItemStack sniper = FletcherArrows.build(
 				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.DIAMOND));
@@ -613,13 +693,20 @@ public final class SelfTest {
 		LOGGER.info("Fletcher: свойства — мембрана {}, блейз горит {}, цель горит {} тиков, аметист {}, "
 				+ "кость толчок {} (ванильная {}), кадры неуязвимости {}, без владельца поджигает {}, "
 				+ "сверху не толкает {}, кремень огонь {}, без владельца огня нет {}, "
+				+ "слиток -50% {}, слиток ломает {}, слиток расходуется {}, неломаемое цело {}, "
+				+ "без владельца не ломает {}, граница мира {}, приключение {}, в полёте {}, "
 				+ "алмаз пробивание {}, лор {}, без свойств у дешёвых {}, зажим подделки {}, обычная стрела {}",
 			ok(glide), ok(lit), burntTicks, ok(glows), push, vanillaPush, ok(noEffectInIFrames),
-			ok(ownerlessBurns), ok(noDownPush), ok(firePlaced), ok(fireRespectsOwner), ok(diamondPierce),
-			ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials), ok(vanillaPlain));
+			ok(ownerlessBurns), ok(noDownPush), ok(firePlaced), ok(fireRespectsOwner),
+			ok(ironHalves), ok(ironBreaks), ok(ironSpends), ok(ironSparesUnbreakable),
+			ok(ironRespectsOwner), ok(ironRespectsBorder), ok(ironRespectsAdventure), ok(ironFlight),
+			ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials),
+			ok(vanillaPlain));
 		return glide && lit && ignites && glows && push > vanillaPush + 0.5 && noEffectInIFrames
-			&& ownerlessBurns && noDownPush && firePlaced && fireRespectsOwner && diamondPierce
-			&& loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
+			&& ownerlessBurns && noDownPush && firePlaced && fireRespectsOwner
+			&& ironHalves && ironBreaks && ironSpends && ironSparesUnbreakable
+			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironFlight
+			&& diamondPierce && loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
 	}
 
 	/** Свинья-мишень в воздухе: по ней и проверяем попадание. */
