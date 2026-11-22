@@ -4,7 +4,10 @@
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
 		"AbstractArrowInvoker",
-		"AbstractArrowMixin"
+		"AbstractArrowMixin",
+		"BundleItemMixin",
+		"PlayerMixin",
+		"ProjectileWeaponItemMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

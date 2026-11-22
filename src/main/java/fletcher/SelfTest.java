@@ -7,19 +7,28 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.SlotAccess;
 import net.minecraft.world.entity.animal.pig.Pig;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ClickAction;
 import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.BowItem;
+import net.minecraft.world.item.BundleItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.level.GameType;
@@ -64,6 +73,7 @@ public final class SelfTest {
 			ok &= arrowTest(server);
 			ok &= clampTest(server);
 			ok &= specialTest(server);
+			ok &= quiverTest(server);
 		} catch (Throwable t) {
 			LOGGER.error("Fletcher: самопроверка упала", t);
 			ok = false;
@@ -1001,6 +1011,170 @@ public final class SelfTest {
 			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironFlight
 			&& explodesBlock && explodesEntity && explodesFlight && explodesFireWire
 			&& diamondPierce && loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
+	}
+
+	/**
+	 * Колчан: мешок → предмет с пятью слотами, выбор ПКМ, забор ЛКМ, стрельба и расход из активного
+	 * слота, креатив/«Бесконечность», пустой слот и работа только в хотбаре.
+	 */
+	private static boolean quiverTest(MinecraftServer server) throws Exception {
+		ServerLevel level = server.overworld();
+		FakePlayer player = freshPlayer(server);
+
+		// создание: мешок → колчан, имя, модель для ресурспака, пустые слоты
+		ItemStack emptyBundle = new ItemStack(Items.BUNDLE);
+		boolean canConvert = Quiver.canConvert(emptyBundle);
+		ItemStack quiver = Quiver.create();
+		boolean created = canConvert && Quiver.isQuiver(quiver)
+			&& Quiver.NAME.equals(quiver.get(DataComponents.ITEM_NAME).getString())
+			&& quiver.get(DataComponents.CUSTOM_MODEL_DATA) != null
+			&& quiver.get(DataComponents.CUSTOM_MODEL_DATA).strings().contains("quiver")
+			&& Quiver.active(quiver) == 0
+			&& Quiver.contents(quiver).stream().allMatch(ItemStack::isEmpty)
+			&& !Quiver.canConvert(quiver)
+			&& !Quiver.canConvert(new ItemStack(Items.ARROW));
+
+			// мешок не должен складывать предметы в BUNDLE_CONTENTS мимо пяти слотов:
+			// оба инвентарных жеста — «мешок на курсоре» и «стрела на мешок»
+			SimpleContainer bundleSlot = new SimpleContainer(new ItemStack(Items.ARROW, 3));
+			Slot otherSlot = new Slot(bundleSlot, 0, 0, 0);
+			ItemStack[] accessValue = {new ItemStack(Items.DIRT)};
+			SlotAccess access = SlotAccess.of(() -> accessValue[0], stack -> accessValue[0] = stack);
+			boolean bundleStoreBlocked = !((BundleItem) quiver.getItem()).overrideStackedOnOther(
+				quiver, otherSlot, ClickAction.PRIMARY, player)
+				&& !((BundleItem) quiver.getItem()).overrideOtherStackedOnMe(
+					quiver, new ItemStack(Items.ARROW, 3), otherSlot, ClickAction.PRIMARY, player, access)
+				&& quiver.get(DataComponents.BUNDLE_CONTENTS).isEmpty()
+				&& bundleSlot.getItem(0).getCount() == 3
+				&& accessValue[0].is(Items.DIRT);
+
+		// содержимое: только стрелы, всё сохраняется в предмете
+		QuiverInventory inventory = new QuiverInventory(quiver);
+		ItemStack fletcherArrow = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET));
+		inventory.setItem(0, fletcherArrow.copyWithCount(4));
+		inventory.setItem(2, new ItemStack(Items.ARROW, 10));
+		boolean arrowsOnly = !inventory.canPlaceItem(0, new ItemStack(Items.DIRT))
+			&& inventory.canPlaceItem(0, new ItemStack(Items.ARROW));
+		QuiverInventory reopened = new QuiverInventory(quiver);
+		boolean persisted = reopened.getItem(0).getCount() == 4
+			&& reopened.getItem(2).getCount() == 10
+			&& reopened.getItem(1).isEmpty()
+			&& Quiver.active(quiver) == 0;
+
+		// ПКМ выбирает слот и ничего не перекладывает, ЛКМ забирает и возвращает стак
+		QuiverMenu menu = new QuiverMenu(0, player.getInventory(), reopened);
+		menu.setCarried(ItemStack.EMPTY);
+		menu.clicked(2, 1, ContainerInput.PICKUP, player);
+		boolean selected = Quiver.active(quiver) == 2
+			&& reopened.getItem(2).getCount() == 10
+			&& menu.getCarried().isEmpty();
+		menu.clicked(0, 0, ContainerInput.PICKUP, player);
+		boolean picked = menu.getCarried().getCount() == 4 && reopened.getItem(0).isEmpty();
+		menu.clicked(0, 0, ContainerInput.PICKUP, player);
+		boolean returned = menu.getCarried().isEmpty() && reopened.getItem(0).getCount() == 4;
+		// shift-click из колчана в инвентарь
+		menu.clicked(2, 0, ContainerInput.QUICK_MOVE, player);
+		boolean shiftOut = reopened.getItem(2).isEmpty() && countArrows(player) == 10;
+
+		// драг и SWAP: только стрелы, стак доливается
+		menu.setCarried(new ItemStack(Items.ARROW, 5));
+		menu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(0, 0), ContainerInput.QUICK_CRAFT, player);
+		menu.clicked(1, AbstractContainerMenu.getQuickcraftMask(1, 0), ContainerInput.QUICK_CRAFT, player);
+		menu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(2, 0), ContainerInput.QUICK_CRAFT, player);
+		boolean dragIn = reopened.getItem(1).getCount() == 5 && menu.getCarried().isEmpty();
+		player.getInventory().setItem(0, new ItemStack(Items.ARROW, 6));
+		menu.clicked(3, 0, ContainerInput.SWAP, player);
+		boolean swapIn = reopened.getItem(3).getCount() == 6 && player.getInventory().getItem(0).isEmpty();
+		player.getInventory().setItem(0, ItemStack.EMPTY);
+		menu.setCarried(new ItemStack(Items.DIRT, 2));
+		menu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(0, 0), ContainerInput.QUICK_CRAFT, player);
+		menu.clicked(4, AbstractContainerMenu.getQuickcraftMask(1, 0), ContainerInput.QUICK_CRAFT, player);
+		menu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(2, 0), ContainerInput.QUICK_CRAFT, player);
+		boolean dragJunk = reopened.getItem(4).isEmpty() && menu.getCarried().getCount() == 2;
+		menu.setCarried(ItemStack.EMPTY);
+
+		// стрельба: колчан в хотбаре, активная стрела с уроном 3, обычные стрелы в инвентаре
+		player.getInventory().clearContent();
+		player.getInventory().setItem(3, quiver);
+		player.getInventory().setItem(9, new ItemStack(Items.ARROW, 7));
+		player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.BOW));
+		Quiver.setActive(quiver, 0);
+
+		ItemStack bow = player.getMainHandItem();
+		ItemStack projectile = player.getProjectile(bow);
+		boolean quiverProjectile = Quiver.sourceSlot(projectile) == 3
+			&& Math.abs(FletcherArrows.baseDamageOf(projectile) - 3.0F) < 1.0E-6F
+			&& projectile.getCount() == 4;
+
+		// расход: useAmmo режет копию, а колчан должен уменьшиться ровно на одну стрелу
+		Method useAmmo = ProjectileWeaponItem.class.getDeclaredMethod("useAmmo",
+			ItemStack.class, ItemStack.class, LivingEntity.class, boolean.class);
+		useAmmo.setAccessible(true);
+		ItemStack used = (ItemStack) useAmmo.invoke(null, bow, projectile, player, false);
+		boolean consumed = used.getCount() == 1
+			&& Quiver.sourceSlot(used) == -1
+			&& Math.abs(FletcherArrows.baseDamageOf(used) - 3.0F) < 1.0E-6F
+			&& Quiver.contents(quiver).get(0).getCount() == 3;
+
+		// креатив: стрела уходит бесплатно, как в ванили
+		GameType before = player.gameMode();
+		player.setGameMode(GameType.CREATIVE);
+		ItemStack creativeProjectile = player.getProjectile(bow);
+		ItemStack free = (ItemStack) useAmmo.invoke(null, bow, creativeProjectile, player, false);
+		boolean noConsume = free.get(DataComponents.INTANGIBLE_PROJECTILE) != null
+			&& Quiver.contents(quiver).get(0).getCount() == 3;
+		player.setGameMode(before);
+
+		// активный слот пуст → обычные стрелы из инвентаря (читаем предмет, чтобы не откатить расход)
+		var current = Quiver.contents(quiver);
+		current.set(1, ItemStack.EMPTY);
+		current.set(4, ItemStack.EMPTY);
+		Quiver.write(quiver, current, 1);
+		ItemStack fallback = player.getProjectile(bow);
+		boolean fallbackLoose = Quiver.sourceSlot(fallback) == -1
+			&& fallback.is(Items.ARROW) && fallback.getCount() == 7;
+
+		// колчан в основном инвентаре (не хотбар) не работает
+		player.getInventory().setItem(3, ItemStack.EMPTY);
+		player.getInventory().setItem(10, quiver);
+		Quiver.setActive(quiver, 0);
+		ItemStack outside = player.getProjectile(bow);
+		boolean hotbarOnly = Quiver.sourceSlot(outside) == -1;
+		player.getInventory().setItem(10, ItemStack.EMPTY);
+		player.getInventory().setItem(3, quiver);
+
+		// полный путь: releaseUsing попадает в getProjectile → draw → useAmmo
+		player.getInventory().setItem(9, new ItemStack(Items.ARROW, 7));
+		int remaining = bow.getItem().getUseDuration(bow, player) - 20;
+		boolean shot = ((BowItem) bow.getItem()).releaseUsing(bow, level, player, remaining);
+		boolean releaseConsumed = shot
+			&& Quiver.contents(quiver).get(0).getCount() == 2
+			&& countArrows(player) == 7;
+
+		boolean ok = created && persisted && arrowsOnly && bundleStoreBlocked && selected && picked && returned
+			&& shiftOut && dragIn && swapIn && dragJunk
+			&& quiverProjectile && consumed && noConsume && fallbackLoose && hotbarOnly && releaseConsumed;
+		LOGGER.info("Fletcher: колчан — создание {}, содержимое {}, только стрелы {}, мешок не хранит {}, "
+				+ "ПКМ {}, ЛКМ {}, shift {}, драг {}, SWAP {}, мусор {}, стрела из колчана {}, расход {}, "
+				+ "креатив {}, пустой слот {}, только хотбар {}, выстрел {}",
+			ok(created), ok(persisted), ok(arrowsOnly), ok(bundleStoreBlocked),
+			ok(selected), ok(picked && returned), ok(shiftOut), ok(dragIn), ok(swapIn), ok(dragJunk),
+			ok(quiverProjectile), ok(consumed), ok(noConsume), ok(fallbackLoose),
+			ok(hotbarOnly), ok(releaseConsumed));
+		return ok;
+	}
+
+	/** Стрелы в инвентаре игрока (колчан сюда не входит). */
+	private static int countArrows(Player player) {
+		int count = 0;
+		for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+			ItemStack stack = player.getInventory().getItem(i);
+			if (stack.is(Items.ARROW)) {
+				count += stack.getCount();
+			}
+		}
+		return count;
 	}
 
 	/** Свинья-мишень в воздухе: по ней и проверяем попадание. */

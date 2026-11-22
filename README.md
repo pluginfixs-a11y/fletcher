@@ -151,6 +151,58 @@ Arrows crafted before 1.5.0 may still carry the removed `harpoon` tag and the ol
 «Притягивает к блоку» name/lore: nothing reads that tag any more, so they fly as ordinary fletcher
 arrows with their stats and do not pull.
 
+## Quiver
+
+An empty `minecraft:bundle` right-clicked on the fletching table becomes a **quiver** and opens its
+screen right away. A bundle with something inside stays a bundle (the table opens and a hint says the
+sack must be empty). The conversion always produces a plain bundle, so a resource pack has only one
+model to override.
+
+The screen is the vanilla hopper menu (`MenuType.HOPPER`) with five real slots and the player
+inventory. Only items in `minecraft:arrows` go in, each slot holds a stack. **Right-click** a slot
+selects it as the active arrow (the contents do not move), **left-click** takes and places stacks as
+in vanilla, shift-click moves stacks to and from the inventory. The vanilla hopper screen cannot
+highlight a slot from the server, so the choice is confirmed by the action bar and the quiver tooltip.
+The active slot may be empty: the bow then falls back to ordinary arrows from the inventory. Hold the
+quiver in the **main hand** to open the screen.
+
+While the quiver is in the hotbar (0-8), a bow or crossbow draws from its active slot instead of the
+inventory. The projectile is a copy of that stack, so every fletcher stat applies, and exactly one
+arrow is spent per shot; Infinity, creative and the extra multishot projectiles spend nothing, as in
+vanilla. A quiver in the main inventory is ignored; with several quivers the first hotbar one with a
+non-empty active slot wins. Right-click with the quiver in the main hand opens the screen again. The
+tooltip shows the active arrow and how many slots are filled.
+
+Contents live in the vanilla `container` component (five `ItemStack`s), the active index in
+`custom_data.fletcher_quiver.active`, and `custom_data.fletcher_quiver.quiver` marks the item. Nothing
+is stored in the menu: closing the screen, moving the item, reconnecting or restarting keeps the
+quiver intact.
+
+### Resource pack
+
+The item id stays `minecraft:bundle` (a server-side mod cannot register one), so without a pack the
+icon is a bundle. The stack carries `custom_model_data` with the string `quiver`; a pack can override
+`assets/minecraft/items/bundle.json` and branch on it, keeping the original bundle definition in the
+fallback so ordinary sacks are untouched:
+
+```json
+{
+  "model": {
+    "type": "minecraft:select",
+    "property": "minecraft:custom_model_data",
+    "index": 0,
+    "cases": [
+      { "when": "quiver", "model": { "type": "minecraft:model", "model": "fletcher:item/quiver" } }
+    ],
+    "fallback": { "type": "minecraft:model", "model": "minecraft:item/bundle" }
+  }
+}
+```
+
+Then add `assets/fletcher/models/item/quiver.json` and the texture. (Paste the vanilla bundle `model` object
+into `fallback` if you want to keep the open-bundle animation.) Without the pack the quiver simply looks
+like a bundle.
+
 ## Mechanics
 
 The range figure in the lore comes from a flight run, not from a gravity-free formula (that one
@@ -222,10 +274,26 @@ vanilla explosion code). A blaze-rod set marks the explosion as fiery in the ite
 mixin field, and a real detonation over a dirt platform actually leaves fire; a stick-shaft set and a
 membrane set stay non-fiery (the membrane keeps its gravity special).
 
+The quiver is covered end to end: an empty bundle converts and a non-convertible item does not, the
+name and `custom_model_data` marker are set, only arrows are accepted (container, `Slot.mayPlace`,
+left-click and drag), the five stacks survive a reopen, right-click selects without moving the
+contents, left-click picks the stack up and puts it back, shift-click moves it to the inventory,
+`SWAP` and drag fill a slot while a dirt drag is refused, and the bundle is blocked from storing items
+in its own `bundle_contents`. A real `BowItem.releaseUsing` draws the selected fletcher arrow
+(damage 3.0) from the hotbar quiver instead of the seven loose arrows. The shot spends exactly one
+arrow from the active slot and leaves the loose stack alone; `useAmmo` returns an unmarked projectile;
+creative spends nothing (`INTANGIBLE_PROJECTILE`); an empty active slot falls back to the inventory
+arrows; a quiver in the main inventory is ignored.
+
 ## Install
 
-Fabric Loader ≥ 0.20.1 + Fabric API on the server, jar into `mods/`. `environment` is `server`, so
-Fabric Loader does not load it in a client at all — singleplayer does not get the table.
+Fabric Loader ≥ 0.20.1 + Fabric API on the server, jar into `mods/`. `environment` is `server`, so a
+client never loads the mod and vanilla clients need nothing installed. With quiver-only arrows a
+vanilla client starts drawing one round-trip later: the server starts the bow, the client adopts the
+using state, and the server refuses the offhand item's effect on that first click so the draw is not
+replaced. The client can still spend that first click on a usable offhand item (food, potion, shield)
+and show it during the hold; an empty/tool/totem offhand or one loose arrow gives a clean first click.
+Singleplayer does not get the table or the quiver.
 
 ## Build
 
