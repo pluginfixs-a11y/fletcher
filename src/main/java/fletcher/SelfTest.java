@@ -667,7 +667,7 @@ public final class SelfTest {
 			// настоящий полёт: проверяется не только прямой вызов onHitBlock, но и то, что стрела
 			// долетает сама, ломает блок и исчезает в тике попадания. Столб над целью чистим:
 			// на тестовом мире с высоким рельефом стрела иначе воткнулась бы в него.
-			for (int y = stone.getY() + 1; y < 206; y++) {
+			for (int y = stone.getY() + 1; y <= 206; y++) {
 				level.setBlock(new BlockPos(stone.getX(), y, stone.getZ()), Blocks.AIR.defaultBlockState(), 3);
 			}
 			level.setBlock(stone, Blocks.DIAMOND_BLOCK.defaultBlockState(), 3);
@@ -719,7 +719,8 @@ public final class SelfTest {
 			if (stonePlaced) {
 				level.removeBlock(stone.above(), false);
 				level.removeBlock(stone, false);
-				// дроп от тестовых разрушений не должен копиться в мире между прогонами
+				// ловит только дроп, попавший в уже видимые секции (например, от прошлого прогона);
+				// свежий дроп этого прогона до онбординга секций здесь не виден
 				for (Entity entity : level.getAllEntities()) {
 					if (entity instanceof ItemEntity item
 						&& item.position().distanceToSqr(1000.5D, 200.5D, 1000.5D) < 64.0D) {

@@ -13,11 +13,16 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.entity.monster.piglin.PiglinAi;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
+import net.minecraft.world.entity.schedule.Activity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.gamerules.GameRules;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -204,9 +209,20 @@ public abstract class AbstractArrowMixin {
 			return;
 		}
 		// playerWillDestroy сюда не зовётся, а именно в нём ваниль злит пиглинов на сундук/золото
-		// бастиона; без этой строки бастион можно было бы обчистить стрелами без ответа
+		// бастиона. Сначала ванильный вызов — он честно обрабатывает UNIVERSAL_ANGER вокруг игрока,
+		// затем то же самое вокруг блока: стрела летит издалека, и пиглины у сундука иначе не узнают,
+		// кто его сломал. Второй цикл повторяет тело PiglinAi.setAngerTarget (ANGRY_AT + UNIVERSAL_ANGER).
 		if (state.is(BlockTags.GUARDED_BY_PIGLINS)) {
 			PiglinAi.angerNearbyPiglins(level, owner, false);
+			for (Piglin piglin : level.getEntitiesOfClass(Piglin.class, new AABB(pos).inflate(16.0D))) {
+				if (piglin.getBrain().isActive(Activity.IDLE)
+					&& !owner.isInvisible() && piglin.canAttack(owner)) {
+					piglin.getBrain().setMemoryWithExpiry(MemoryModuleType.ANGRY_AT, owner.getUUID(), 600L);
+					if (level.getGameRules().get(GameRules.UNIVERSAL_ANGER)) {
+						piglin.getBrain().setMemoryWithExpiry(MemoryModuleType.UNIVERSAL_ANGER, true, 600L);
+					}
+				}
+			}
 		}
 		// dropResources=true: блок выпадает так же, как от кирки; прочность destroyBlock не смотрит,
 		// поэтому обсидиан ломается с одного попадания. Стрела расходуется только если блок исчез.

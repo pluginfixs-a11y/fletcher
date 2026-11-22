@@ -77,7 +77,7 @@ stick) deliberately get nothing — they stay the cheap filler:
 | shaft | bone | knockback equal to Punch II (its +0.5 damage is gone — it is a trade, not a bonus) |
 | head | flint | ignites the block it sticks into, like flint and steel |
 | head | amethyst shard | the target glows for 8 s — you can see it through walls and track it |
-| head | iron ingot | breaks blocks with destroy speed ≤ 10 (stone, ores, storage blocks, heavy core) and is consumed; obsidian, netherite and harder stay intact |
+| head | iron ingot | breaks blocks with destroy speed ≤ 10 (stone, ores, storage blocks, heavy core) and is consumed; obsidian, netherite, ender chest and harder stay intact |
 | head | diamond | piercing 3 (the ceiling that used to be unreachable) |
 
 Specials stack: membrane + blaze rod is a gliding fire arrow, amethyst + piercing 3 lights up a whole
@@ -187,6 +187,8 @@ Fabric Loader ≥ 0.20.1 + Fabric API on the server, jar into `mods/`. `environm
 Fabric Loader does not load it in a client at all — singleplayer does not get the table.
 
 ## Build
+
+JDK 25 must be the active `JAVA_HOME`; the build no longer pins a local path.
 
 ```
 ./gradlew build
