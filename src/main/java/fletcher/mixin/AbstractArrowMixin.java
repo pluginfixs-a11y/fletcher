@@ -7,6 +7,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityTypes;
@@ -166,10 +167,11 @@ public abstract class AbstractArrowMixin {
 	}
 
 	/**
-	 * Железный слиток: стрела ломает блок, в который воткнулась, без инструмента и не глядя на прочность —
-	 * обсидиан, древние обломки, руды. Неломаемое не берёт: у бедрока, барьера, командного и
-	 * структурного блока скорость разрушения отрицательная, и кирка их тоже не берёт. Плата — сама
-	 * стрела: после попадания она уничтожается, подобрать её нельзя.
+	 * Железный слиток: стрела ломает блок, в который воткнулась, без инструмента, но только до
+	 * железного уровня — камень, руды, алмазный блок. Твёрже (обсидиан, незерит, древние обломки,
+	 * якорь возрождения, усилённый глубинный сланец) и неломаемое (отрицательная прочность: бедрок,
+	 * барьер, командный и структурный блок) не берёт. Плата — сама стрела: после попадания она
+	 * уничтожается, подобрать её нельзя.
 	 * <p>
 	 * Без игрока-владельца (скелет, раздатчик) и там, где игроку нельзя ломать (приключение,
 	 * спавн-защита, граница мира), блок остаётся целым — стрела тогда просто втыкается, как обычная,
@@ -191,9 +193,13 @@ public abstract class AbstractArrowMixin {
 		if (!level.mayInteract(owner, pos) || owner.blockActionRestricted(level, pos, owner.gameMode())) {
 			return;
 		}
-		// неломаемое отсекаем по отрицательной скорости разрушения: destroyBlock прочность не проверяет
-		// вообще, поэтому без этой строки стрела ломала бы бедрок
-		if (level.getBlockState(pos).getDestroySpeed(level, pos) < 0.0F) {
+		// destroyBlock прочность не проверяет вообще, поэтому потолок ставим сами: неломаемое
+		// (отрицательная скорость) и всё твёрже железного/алмазного блока стрела не берёт — обсидиан,
+		// незерит, древние обломки, якорь возрождения, усилённый глубинный сланец. Тег отдельно:
+		// модовый блок может требовать алмазную кирку и при низкой прочности.
+		BlockState state = level.getBlockState(pos);
+		float hardness = state.getDestroySpeed(level, pos);
+		if (hardness < 0.0F || hardness > 5.0F || state.is(BlockTags.NEEDS_DIAMOND_TOOL)) {
 			return;
 		}
 		// dropResources=true: блок выпадает так же, как от кирки; прочность destroyBlock не смотрит,
