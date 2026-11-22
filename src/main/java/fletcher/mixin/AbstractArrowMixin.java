@@ -161,10 +161,13 @@ public abstract class AbstractArrowMixin {
 		Vec3 pull = delta.scale(FletcherArrows.HARPOON_SPEED / distance);
 		owner.setDeltaMovement(pull);
 		// отправляем точную скорость сейчас; hurtMarked отправил бы её на тик позже и уже
-		// после трения, то есть 3 б/с превратились бы в ~1.6 б/с
+		// после трения, то есть 3 б/с превратились бы в ~1.6 б/с. Флаг снимаем: скорость уже
+		// перезаписана притяжением, а отложенный пакет только испортил бы её
 		owner.hurtMarked = false;
 		if (owner.connection != null) {
 			owner.connection.send(new ClientboundSetEntityMotionPacket(owner));
+			// длинный рывок в воздухе иначе ловит ванильный антифлай-кик «Flying is not enabled»
+			owner.connection.resetFlyingTicks();
 		}
 		owner.resetFallDistance();
 		this.fletcher$harpoonTicks--;
