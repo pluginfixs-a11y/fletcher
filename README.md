@@ -77,7 +77,7 @@ stick) deliberately get nothing — they stay the cheap filler:
 | shaft | bone | knockback equal to Punch II (its +0.5 damage is gone — it is a trade, not a bonus) |
 | head | flint | ignites the block it sticks into, like flint and steel |
 | head | amethyst shard | the target glows for 8 s — you can see it through walls and track it |
-| head | iron ingot | breaks blocks up to iron tier (stone, ores, diamond blocks) and is consumed; obsidian, netherite and harder stay intact |
+| head | iron ingot | breaks blocks with destroy speed ≤ 10 (stone, ores, storage blocks, heavy core) and is consumed; obsidian, netherite and harder stay intact |
 | head | diamond | piercing 3 (the ceiling that used to be unreachable) |
 
 Specials stack: membrane + blaze rod is a gliding fire arrow, amethyst + piercing 3 lights up a whole
@@ -107,16 +107,18 @@ Three things are deliberately vanilla-shaped rather than stronger:
   hit pushes nothing, as in vanilla.
 
 The iron ingot is the one deliberate exception to "vanilla-shaped rather than stronger": the arrow
-breaks the block it hits up to iron tier — stone, deepslate, ores, diamond/iron/gold/emerald blocks
-(destroy speed ≤ 5) — and is consumed doing it: a mining tool that costs an arrow per block and gives
-up half the damage. It refuses what the game gates behind a diamond pickaxe or high hardness:
-obsidian, crying obsidian, netherite block, ancient debris, respawn anchor, reinforced deepslate,
-ender chest, everything with a negative destroy speed (bedrock, barrier, command and structure blocks)
-and anything in `minecraft:needs_diamond_tool`. Those just stick like a normal arrow and are not
-spent. Drops are the block's own (`destroyBlock(..., true)`), so an ore still drops its item; a block
-without a drop table simply vanishes. It still needs a player owner (a skeleton's or dispenser's arrow
-only sticks) and still asks `mayInteract`/`blockActionRestricted`, so adventure mode, spawn protection
-and the world border refuse it the way they refuse a player's break.
+breaks the block it hits when its destroy speed is at most 10 — stone, deepslate, ores,
+diamond/iron/gold/emerald blocks, heavy core, creaking heart — and is consumed doing it: a mining tool
+that costs one arrow entity per block (a Multishot volley spends one ammo item for three arrows, so
+it can break up to three blocks) and gives up half the damage. It refuses what the game gates behind
+a diamond pickaxe or high hardness: obsidian, crying obsidian, netherite block, ancient debris,
+respawn anchor, reinforced deepslate, ender chest, everything with a negative destroy speed (bedrock,
+barrier, command and structure blocks) and anything in `minecraft:needs_diamond_tool`. Those just
+stick like a normal arrow and are not spent. Drops are the block's own
+(`destroyBlock(..., true)`), so an ore still drops its item; a block without a drop table simply
+vanishes. It still needs a player owner (a skeleton's or dispenser's arrow only sticks) and still
+asks `mayInteract`/`blockActionRestricted`, so adventure mode, spawn protection and the world border
+refuse it the way they refuse a player's break.
 
 ## Mechanics
 
@@ -168,15 +170,16 @@ logic: a membrane arrow reports gravity 0.025, a blaze rod arrow is on fire and 
 for 200 ticks, an amethyst arrow gives the pig 8 s of Glowing, a bone arrow pushes it further than a
 plain arrow does, a second arrow into the same pig's i-frames applies nothing, a flint arrow sets the
 block it hits on fire while an ownerless one does not, an iron ingot arrow reports −50 % damage
-(tooltip included), breaks a diamond block and is spent, leaves bedrock, obsidian, crying obsidian,
-netherite block, ancient debris, respawn anchor and reinforced deepslate intact and unspent, refuses
-a breakable block without a player owner, outside the world border and in adventure mode with an
-empty hand, and does all of it on a real flight — a ticked arrow, not only a direct `onHitBlock`
-call. A diamond arrow reports piercing 3, the lore of a three-special arrow has six lines, forged
+(tooltip included), breaks a heavy core (destroy speed 10, the allowed boundary) and is spent, leaves
+bedrock, obsidian, crying obsidian, netherite block, ancient debris, respawn anchor, reinforced
+deepslate and ender chest intact and unspent, refuses a breakable block without a player owner,
+outside the world border and in adventure mode with an empty hand, and does all of it on a real
+flight — a ticked arrow into a diamond block, not only a direct `onHitBlock` call. The drop itself is
+not asserted: the manually ticked arrow does not onboard the chunk's entity sections, so a freshly
+spawned item entity is not visible to entity queries; the call is vanilla `destroyBlock(..., true)`.
+A diamond arrow reports piercing 3, the lore of a three-special arrow has six lines, forged
 `ignite/gravity/glow/knockback` clamp to 30 / 0.005 / 1200 / 2, and bamboo/paper/stick report no
-special at all. The item the broken block drops is not asserted: the self-test runs before the first
-tick, when dropped item entities are not visible yet, so only the block's disappearance and the
-arrow's consumption are checked; the drop itself is vanilla `destroyBlock(..., true)`.
+special at all.
 
 ## Install
 

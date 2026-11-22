@@ -13,6 +13,7 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.monster.piglin.PiglinAi;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BaseFireBlock;
@@ -168,10 +169,10 @@ public abstract class AbstractArrowMixin {
 
 	/**
 	 * Железный слиток: стрела ломает блок, в который воткнулась, без инструмента, но только до
-	 * железного уровня — камень, руды, алмазный блок. Твёрже (обсидиан, незерит, древние обломки,
-	 * якорь возрождения, усилённый глубинный сланец) и неломаемое (отрицательная прочность: бедрок,
-	 * барьер, командный и структурный блок) не берёт. Плата — сама стрела: после попадания она
-	 * уничтожается, подобрать её нельзя.
+	 * прочности 10 — камень, руды, алмазный блок, тяжёлое ядро. Твёрже (обсидиан, незерит, древние
+	 * обломки, якорь возрождения, усилённый глубинный сланец) и неломаемое (отрицательная прочность:
+	 * бедрок, барьер, командный и структурный блок) не берёт. Плата — сама стрела: после попадания
+	 * она уничтожается, подобрать её нельзя.
 	 * <p>
 	 * Без игрока-владельца (скелет, раздатчик) и там, где игроку нельзя ломать (приключение,
 	 * спавн-защита, граница мира), блок остаётся целым — стрела тогда просто втыкается, как обычная,
@@ -194,13 +195,18 @@ public abstract class AbstractArrowMixin {
 			return;
 		}
 		// destroyBlock прочность не проверяет вообще, поэтому потолок ставим сами: неломаемое
-		// (отрицательная скорость) и всё твёрже железного/алмазного блока стрела не берёт — обсидиан,
-		// незерит, древние обломки, якорь возрождения, усилённый глубинный сланец. Тег отдельно:
-		// модовый блок может требовать алмазную кирку и при низкой прочности.
+		// (отрицательная скорость) и всё твёрже 10 стрела не берёт — обсидиан, незерит, древние
+		// обломки, якорь возрождения, усилённый глубинный сланец. Тег отдельно: модовый блок может
+		// требовать алмазную кирку и при низкой прочности.
 		BlockState state = level.getBlockState(pos);
 		float hardness = state.getDestroySpeed(level, pos);
-		if (hardness < 0.0F || hardness > 5.0F || state.is(BlockTags.NEEDS_DIAMOND_TOOL)) {
+		if (hardness < 0.0F || hardness > 10.0F || state.is(BlockTags.NEEDS_DIAMOND_TOOL)) {
 			return;
+		}
+		// playerWillDestroy сюда не зовётся, а именно в нём ваниль злит пиглинов на сундук/золото
+		// бастиона; без этой строки бастион можно было бы обчистить стрелами без ответа
+		if (state.is(BlockTags.GUARDED_BY_PIGLINS)) {
+			PiglinAi.angerNearbyPiglins(level, owner, false);
 		}
 		// dropResources=true: блок выпадает так же, как от кирки; прочность destroyBlock не смотрит,
 		// поэтому обсидиан ломается с одного попадания. Стрела расходуется только если блок исчез.

@@ -50,7 +50,7 @@ public final class FletcherArrows {
 	public static final String KEY_GLOW = "glow";
 	/** 1 — поджигает блок, в который воткнулась. */
 	public static final String KEY_FIRE = "fire";
-	/** 1 — ломает блок до железного уровня (твёрже и неломаемое — нет), расходуясь. */
+	/** 1 — ломает блок прочностью до 10 (твёрже и неломаемое — нет), расходуясь. */
 	public static final String KEY_BREAK = "break";
 	/** Сила отбрасывания в единицах зачарования «Удар» (2 уровня = 2.0). */
 	public static final String KEY_KNOCKBACK = "knockback";
@@ -121,8 +121,8 @@ public final class FletcherArrows {
 		SPECIALS.put(Items.AMETHYST_SHARD, new Special(0.0F, 0.0F, 160, false, 0.0F, false, "Подсвечивает 8 с"));
 		SPECIALS.put(Items.FLINT, new Special(0.0F, 0.0F, 0, true, 0.0F, false, "Поджигает блок"));
 		SPECIALS.put(Items.BONE, new Special(0.0F, 0.0F, 0, false, 2.0F, false, "Отбрасывает как «Удар II»"));
-		// слиток стоит вдвое дешевле урона (-1.0 = половина ванильной базы) и ломает любой блок до
-		// железного уровня, не глядя на инструмент; твёрже алмазного блока и неломаемое — нет.
+		// слиток стоит вдвое дешевле урона (-1.0 = половина ванильной базы) и ломает обычный блок
+		// (прочность до 10), не глядя на инструмент; твёрже и неломаемое — нет.
 		// Цена — сама стрела, после попадания её не подобрать
 		SPECIALS.put(Items.IRON_INGOT, new Special(0.0F, 0.0F, 0, false, 0.0F, true, "Ломает блок, расходуясь"));
 
@@ -425,7 +425,7 @@ public final class FletcherArrows {
 		return tag != null && tag.getBooleanOr(KEY_FIRE, false);
 	}
 
-	/** Ломает ли стрела блок, в который воткнулась (только до железного уровня); тогда же она и расходуется. */
+	/** Ломает ли стрела блок, в который воткнулась (прочность до 10); тогда же она и расходуется. */
 	public static boolean breaksBlocks(ItemStack arrow) {
 		CompoundTag tag = dataOf(arrow);
 		return tag != null && tag.getBooleanOr(KEY_BREAK, false);

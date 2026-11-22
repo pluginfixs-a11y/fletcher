@@ -13,6 +13,7 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.animal.pig.Pig;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -581,9 +582,9 @@ public final class SelfTest {
 			fireRespectsOwner = !(level.getBlockState(stone.above()).getBlock() instanceof BaseFireBlock);
 			orphan.discard();
 
-			// железный слиток: -50% урона, зато ломает блок до железного уровня (алмазный блок — предел:
-			// прочность 5) и расходуется. Твёрже алмазного блока (обсидиан, незерит, древние обломки,
-			// якорь возрождения, усилённый сланец) и неломаемое он не берёт — стрела просто втыкается
+			// железный слиток: -50% урона, зато ломает блок прочностью до 10 (тяжёлое ядро — ровно 10,
+			// предел) и расходуется. Твёрже (обсидиан, незерит, древние обломки, якорь возрождения,
+			// усилённый сланец, эндер-сундук) и неломаемое он не берёт — стрела просто втыкается
 			// и остаётся подбираемой, платить стрелой не за что.
 			ItemStack crushing = FletcherArrows.build(
 				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_INGOT));
@@ -593,7 +594,7 @@ public final class SelfTest {
 			ironHalves = Math.abs(damage(breaker) - 1.0D) < 1.0E-6D
 				&& crushingLore != null
 				&& "Урон: -50 %".equals(crushingLore.lines().getFirst().getString());
-			level.setBlock(stone, Blocks.DIAMOND_BLOCK.defaultBlockState(), 3);
+			level.setBlock(stone, Blocks.HEAVY_CORE.defaultBlockState(), 3);
 			hitBlock(breaker, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
 			ironBreaks = level.getBlockState(stone).isAir();
 			ironSpends = breaker.isRemoved();
@@ -607,10 +608,12 @@ public final class SelfTest {
 				&& !unbreakable.isRemoved();
 			unbreakable.discard();
 
-			// прочные блоки (прочность > 5): тоже целы и не списывают стрелу
+			// прочные блоки (прочность > 10): тоже целы и не списывают стрелу. Тег needs_diamond_tool
+			// здесь отдельно не проверяется: в ванили все его блоки и так прочнее 10, он нужен
+			// модовым/датапаковым блокам с низкой прочностью.
 			boolean durableIntact = true;
 			Block[] durable = {Blocks.OBSIDIAN, Blocks.CRYING_OBSIDIAN, Blocks.NETHERITE_BLOCK,
-				Blocks.ANCIENT_DEBRIS, Blocks.RESPAWN_ANCHOR, Blocks.REINFORCED_DEEPSLATE};
+				Blocks.ANCIENT_DEBRIS, Blocks.RESPAWN_ANCHOR, Blocks.REINFORCED_DEEPSLATE, Blocks.ENDER_CHEST};
 			for (Block block : durable) {
 				level.setBlock(stone, block.defaultBlockState(), 3);
 				Arrow toughArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
@@ -636,27 +639,37 @@ public final class SelfTest {
 			// с пустой рукой (blockActionRestricted) ломаемый блок остаётся целым, стрела — подбираемой
 			double borderSize = level.getWorldBorder().getSize();
 			level.getWorldBorder().setSize(100.0D);
-			level.setBlock(stone, Blocks.DIAMOND_BLOCK.defaultBlockState(), 3);
-			Arrow borderArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
-			borderArrow.setOwner(owner);
-			hitBlock(borderArrow, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
-			ironRespectsBorder = level.getBlockState(stone).is(Blocks.DIAMOND_BLOCK) && !borderArrow.isRemoved();
-			borderArrow.discard();
-			level.getWorldBorder().setSize(borderSize);
+			try {
+				level.setBlock(stone, Blocks.DIAMOND_BLOCK.defaultBlockState(), 3);
+				Arrow borderArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+				borderArrow.setOwner(owner);
+				hitBlock(borderArrow, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+				ironRespectsBorder = level.getBlockState(stone).is(Blocks.DIAMOND_BLOCK) && !borderArrow.isRemoved();
+				borderArrow.discard();
+			} finally {
+				level.getWorldBorder().setSize(borderSize);
+			}
 
 			GameType gameModeBefore = owner.gameMode();
 			owner.setGameMode(GameType.ADVENTURE);
-			level.setBlock(stone, Blocks.DIAMOND_BLOCK.defaultBlockState(), 3);
-			Arrow adventureArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
-			adventureArrow.setOwner(owner);
-			hitBlock(adventureArrow, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
-			ironRespectsAdventure = level.getBlockState(stone).is(Blocks.DIAMOND_BLOCK)
-				&& !adventureArrow.isRemoved();
-			adventureArrow.discard();
-			owner.setGameMode(gameModeBefore);
+			try {
+				level.setBlock(stone, Blocks.DIAMOND_BLOCK.defaultBlockState(), 3);
+				Arrow adventureArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+				adventureArrow.setOwner(owner);
+				hitBlock(adventureArrow, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+				ironRespectsAdventure = level.getBlockState(stone).is(Blocks.DIAMOND_BLOCK)
+					&& !adventureArrow.isRemoved();
+				adventureArrow.discard();
+			} finally {
+				owner.setGameMode(gameModeBefore);
+			}
 
 			// настоящий полёт: проверяется не только прямой вызов onHitBlock, но и то, что стрела
-			// долетает сама, ломает блок и исчезает в тике попадания
+			// долетает сама, ломает блок и исчезает в тике попадания. Столб над целью чистим:
+			// на тестовом мире с высоким рельефом стрела иначе воткнулась бы в него.
+			for (int y = stone.getY() + 1; y < 206; y++) {
+				level.setBlock(new BlockPos(stone.getX(), y, stone.getZ()), Blocks.AIR.defaultBlockState(), 3);
+			}
 			level.setBlock(stone, Blocks.DIAMOND_BLOCK.defaultBlockState(), 3);
 			Arrow flying = new Arrow(level, 1000.5D, 206.0D, 1000.5D, crushing, new ItemStack(Items.BOW));
 			flying.setOwner(owner);
@@ -666,8 +679,9 @@ public final class SelfTest {
 			}
 			ironFlight = level.getBlockState(stone).isAir() && flying.isRemoved();
 
-			// дроп из таблицы лута здесь не проверяется: самопроверка идёт до первого тика, когда
-			// секции сущностей ещё не онбордены (даже свинья-канарейка в этом чанке не видна)
+			// дроп не проверяем: ручной tick стрелы не онбордит секции сущностей чанка, поэтому
+			// только что выпавший ItemEntity не виден ни getAllEntities, ни getEntitiesOfClass;
+			// сам вызов destroyBlock(..., true) — ванильный
 
 			// алмазный наконечник теперь добирается до потолка пробивания
 			ItemStack sniper = FletcherArrows.build(
@@ -705,6 +719,13 @@ public final class SelfTest {
 			if (stonePlaced) {
 				level.removeBlock(stone.above(), false);
 				level.removeBlock(stone, false);
+				// дроп от тестовых разрушений не должен копиться в мире между прогонами
+				for (Entity entity : level.getAllEntities()) {
+					if (entity instanceof ItemEntity item
+						&& item.position().distanceToSqr(1000.5D, 200.5D, 1000.5D) < 64.0D) {
+						item.discard();
+					}
+				}
 				level.setChunkForced(stone.getX() >> 4, stone.getZ() >> 4, false);
 			}
 		}
