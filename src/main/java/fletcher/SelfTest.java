@@ -2,8 +2,10 @@ package fletcher;
 
 import fletcher.mixin.AbstractArrowInvoker;
 import net.fabricmc.fabric.api.entity.FakePlayer;
+import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -26,10 +28,14 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.BundleItem;
+import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ProjectileWeaponItem;
+import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BaseFireBlock;
@@ -39,6 +45,7 @@ import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.core.Direction;
 import org.slf4j.Logger;
 
@@ -157,13 +164,17 @@ public final class SelfTest {
 			&& !inventory.canPlaceItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.STRING))
 			&& !inventory.canPlaceItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.FEATHER))
 			&& !inventory.canPlaceItem(1, new ItemStack(Items.GUNPOWDER));
+		// результат (4) не принимает ничего: без отдельной ветки roleForSlot(4) == roleOf(мусор) давало true
+		boolean outputSealed = !inventory.canPlaceItem(FletcherInventory.SLOT_OUTPUT, new ItemStack(Items.DIRT))
+			&& !inventory.canPlaceItem(FletcherInventory.SLOT_OUTPUT, new ItemStack(Items.FEATHER))
+			&& !inventory.canPlaceItem(FletcherInventory.SLOT_OUTPUT, ItemStack.EMPTY);
 
 		LOGGER.info("Fletcher: контейнер — результат {}, расход {}, порядок {}, мусор {}, роли {}, "
-				+ "добавка {}, расход добавки {}, огненный взрыв {}",
+				+ "добавка {}, расход добавки {}, огненный взрыв {}, результат запечатан {}",
 			ok(built), ok(consumed), ok(wrongOrder), ok(junkIgnored), ok(filter),
-			ok(addonBuilt), ok(addonConsumed), ok(fieryBuilt));
+			ok(addonBuilt), ok(addonConsumed), ok(fieryBuilt), ok(outputSealed));
 		return built && consumed && wrongOrder && junkIgnored && filter
-			&& addonBuilt && addonConsumed && fieryBuilt;
+			&& addonBuilt && addonConsumed && fieryBuilt && outputSealed;
 	}
 
 	private static boolean menuTest(MinecraftServer server) {
@@ -608,6 +619,7 @@ public final class SelfTest {
 		boolean ironRespectsOwner;
 		boolean ironRespectsBorder;
 		boolean ironRespectsAdventure;
+		boolean ironRespectsVeto;
 		boolean ironFlight;
 		boolean explodesBlock;
 		boolean explodesEntity;
@@ -822,6 +834,17 @@ public final class SelfTest {
 				owner.setGameMode(gameModeBefore);
 			}
 
+			// защита: слушатель BEFORE отменяет конкретный блок — блок цел, стрела не потрачена
+			BlockPos vetoPos = new BlockPos(1002, 200, 1000);
+			level.setBlock(vetoPos, Blocks.STONE.defaultBlockState(), 3);
+			PlayerBlockBreakEvents.BEFORE.register((lvl, p, ppos, st, be) -> !ppos.equals(vetoPos));
+			Arrow vetoArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+			vetoArrow.setOwner(owner);
+			hitBlock(vetoArrow, new BlockHitResult(new Vec3(1002.5, 201.0, 1000.5), Direction.UP, vetoPos, false));
+			ironRespectsVeto = level.getBlockState(vetoPos).is(Blocks.STONE) && !vetoArrow.isRemoved();
+			vetoArrow.discard();
+			level.setBlock(vetoPos, Blocks.AIR.defaultBlockState(), 3);
+
 			// настоящий полёт: проверяется не только прямой вызов onHitBlock, но и то, что стрела
 			// долетает сама, ломает блок и исчезает в тике попадания. Столб над целью чистим:
 			// на тестовом мире с высоким рельефом стрела иначе воткнулась бы в него.
@@ -995,20 +1018,20 @@ public final class SelfTest {
 				+ "кость толчок {} (ванильная {}), кадры неуязвимости {}, без владельца поджигает {}, "
 				+ "сверху не толкает {}, кремень огонь {}, без владельца огня нет {}, "
 				+ "слиток -50% {}, слиток ломает {}, слиток расходуется {}, неломаемое цело {}, прочное цело {}, "
-				+ "без владельца не ломает {}, граница мира {}, приключение {}, в полёте {}, "
+				+ "без владельца не ломает {}, граница мира {}, приключение {}, вето {}, в полёте {}, "
 				+ "порох блок {}, порох сущность {}, порох полёт {}, огненный взрыв {}, "
 				+ "алмаз пробивание {}, лор {}, без свойств у дешёвых {}, зажим подделки {}, обычная стрела {}",
 			ok(glide), ok(lit), burntTicks, ok(glows), push, vanillaPush, ok(noEffectInIFrames),
 			ok(ownerlessBurns), ok(noDownPush), ok(firePlaced), ok(fireRespectsOwner),
 			ok(ironHalves), ok(ironBreaks), ok(ironSpends), ok(ironSparesUnbreakable),
 			ok(ironSparesDurable), ok(ironRespectsOwner), ok(ironRespectsBorder), ok(ironRespectsAdventure),
-			ok(ironFlight), ok(explodesBlock), ok(explodesEntity), ok(explodesFlight), ok(explodesFireWire),
+			ok(ironRespectsVeto), ok(ironFlight), ok(explodesBlock), ok(explodesEntity), ok(explodesFlight), ok(explodesFireWire),
 			ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials),
 			ok(vanillaPlain));
 		return glide && lit && ignites && glows && push > vanillaPush + 0.5 && noEffectInIFrames
 			&& ownerlessBurns && noDownPush && firePlaced && fireRespectsOwner
 			&& ironHalves && ironBreaks && ironSpends && ironSparesUnbreakable && ironSparesDurable
-			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironFlight
+			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironRespectsVeto && ironFlight
 			&& explodesBlock && explodesEntity && explodesFlight && explodesFireWire
 			&& diamondPierce && loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
 	}
@@ -1152,16 +1175,64 @@ public final class SelfTest {
 			&& Quiver.contents(quiver).get(0).getCount() == 2
 			&& countArrows(player) == 7;
 
+		// арбалет: зарядка идёт своим путём через CHARGED_PROJECTILES, а не через releaseUsing
+		ItemStack crossbow = new ItemStack(Items.CROSSBOW);
+		player.setItemInHand(InteractionHand.MAIN_HAND, crossbow);
+		Method tryLoad = CrossbowItem.class.getDeclaredMethod("tryLoadProjectiles", LivingEntity.class, ItemStack.class);
+		tryLoad.setAccessible(true);
+		boolean loaded = (boolean) tryLoad.invoke(null, player, crossbow);
+		ChargedProjectiles charged = crossbow.get(DataComponents.CHARGED_PROJECTILES);
+		ItemStack chargedArrow = charged == null || charged.itemCopies().isEmpty()
+			? ItemStack.EMPTY : charged.itemCopies().get(0);
+		boolean crossbowOk = loaded && CrossbowItem.isCharged(crossbow)
+			&& chargedArrow.getCount() == 1
+			&& Quiver.sourceSlot(chargedArrow) == -1
+			&& Math.abs(FletcherArrows.baseDamageOf(chargedArrow) - 3.0F) < 1.0E-6F
+			&& chargedArrow.get(DataComponents.INTANGIBLE_PROJECTILE) == null
+			&& Quiver.contents(quiver).get(0).getCount() == 1;
+
+		// Multishot: один расход из колчана, три снаряда, лишние — INTANGIBLE
+		ItemStack multishot = new ItemStack(Items.CROSSBOW);
+		ItemEnchantments.Mutable enchants = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
+		enchants.set(server.registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.MULTISHOT), 1);
+		multishot.set(DataComponents.ENCHANTMENTS, enchants.toImmutable());
+		player.setItemInHand(InteractionHand.MAIN_HAND, multishot);
+		boolean multiLoaded = (boolean) tryLoad.invoke(null, player, multishot);
+		ChargedProjectiles multi = multishot.get(DataComponents.CHARGED_PROJECTILES);
+		boolean multishotOk = multiLoaded && multi != null && multi.itemCopies().size() == 3
+			&& multi.itemCopies().get(0).get(DataComponents.INTANGIBLE_PROJECTILE) == null
+			&& multi.itemCopies().get(1).get(DataComponents.INTANGIBLE_PROJECTILE) != null
+			&& multi.itemCopies().get(2).get(DataComponents.INTANGIBLE_PROJECTILE) != null
+			&& Quiver.contents(quiver).get(0).isEmpty();
+
+		// уничтожение (лава/огонь/кактус): стрелы должны вылететь, а не исчезнуть вместе с колчаном
+		ItemStack doomed = Quiver.create();
+		QuiverInventory doomedInventory = new QuiverInventory(doomed);
+		doomedInventory.setItem(0, fletcherArrow.copyWithCount(5));
+		ItemEntity doomedEntity = new ItemEntity(level, 0.5D, 128.0D, 0.5D, doomed);
+		level.addFreshEntity(doomedEntity);
+		boolean killed = doomedEntity.hurtServer(level, level.damageSources().lava(), 10.0F);
+		AABB dropArea = new AABB(0.0D, 127.0D, 0.0D, 1.0D, 129.0D, 1.0D);
+		List<ItemEntity> droppedArrows = level.getEntitiesOfClass(ItemEntity.class, dropArea,
+			entity -> entity != doomedEntity && entity.getItem().is(Items.ARROW)
+				&& entity.getItem().getCount() == 5);
+		boolean destruction = killed && doomedEntity.isRemoved()
+			&& droppedArrows.size() == 1
+			&& Quiver.contents(doomedEntity.getItem()).stream().allMatch(ItemStack::isEmpty);
+		droppedArrows.forEach(Entity::discard);
+
 		boolean ok = created && persisted && arrowsOnly && bundleStoreBlocked && selected && picked && returned
 			&& shiftOut && dragIn && swapIn && dragJunk
-			&& quiverProjectile && consumed && noConsume && fallbackLoose && hotbarOnly && releaseConsumed;
+			&& quiverProjectile && consumed && noConsume && fallbackLoose && hotbarOnly && releaseConsumed
+			&& crossbowOk && multishotOk && destruction;
 		LOGGER.info("Fletcher: колчан — создание {}, содержимое {}, только стрелы {}, мешок не хранит {}, "
 				+ "ПКМ {}, ЛКМ {}, shift {}, драг {}, SWAP {}, мусор {}, стрела из колчана {}, расход {}, "
-				+ "креатив {}, пустой слот {}, только хотбар {}, выстрел {}",
+				+ "креатив {}, пустой слот {}, только хотбар {}, выстрел {}, арбалет {}, мультивыстрел {}, "
+				+ "уничтожение {}",
 			ok(created), ok(persisted), ok(arrowsOnly), ok(bundleStoreBlocked),
 			ok(selected), ok(picked && returned), ok(shiftOut), ok(dragIn), ok(swapIn), ok(dragJunk),
 			ok(quiverProjectile), ok(consumed), ok(noConsume), ok(fallbackLoose),
-			ok(hotbarOnly), ok(releaseConsumed));
+			ok(hotbarOnly), ok(releaseConsumed), ok(crossbowOk), ok(multishotOk), ok(destruction));
 		return ok;
 	}
 

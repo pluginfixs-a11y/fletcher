@@ -99,8 +99,6 @@ public final class FletcherArrows {
 	private static final List<Item> SHAFT_ITEMS;
 	private static final List<Item> HEAD_ITEMS;
 	private static final List<Item> ADDON_ITEMS;
-	/** Всё, что вообще принимает стол: для подсказок в пустых слотах. */
-	private static final List<Item> POOL;
 
 	static {
 		// оперение: дальность и урон
@@ -144,12 +142,6 @@ public final class FletcherArrows {
 		SHAFT_ITEMS = List.copyOf(SHAFTS.keySet());
 		HEAD_ITEMS = List.copyOf(HEADS.keySet());
 		ADDON_ITEMS = List.copyOf(ADDONS.keySet());
-
-		List<Item> all = new ArrayList<>();
-		all.addAll(FEATHER_ITEMS);
-		all.addAll(SHAFT_ITEMS);
-		all.addAll(HEAD_ITEMS);
-		POOL = List.copyOf(all);
 	}
 
 	private FletcherArrows() {
@@ -241,25 +233,6 @@ public final class FletcherArrows {
 			}
 		}
 		return null;
-	}
-
-	public static Part partOf(ItemStack stack) {
-		if (stack.isEmpty()) {
-			return null;
-		}
-		Item item = stack.getItem();
-		Part part = FEATHERS.get(item);
-		if (part == null) {
-			part = SHAFTS.get(item);
-		}
-		if (part == null) {
-			part = HEADS.get(item);
-		}
-		return part;
-	}
-
-	public static List<Item> pool() {
-		return POOL;
 	}
 
 	/** Предметы одной роли — для подсказок в её слоте. */

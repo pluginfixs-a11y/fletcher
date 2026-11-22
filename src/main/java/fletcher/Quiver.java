@@ -153,8 +153,15 @@ public final class Quiver {
 		return null;
 	}
 
-	/** Списать одну стрелу из активного слота колчана в указанном слоте хотбара. */
-	public static void consumeAt(Player player, int hotbarSlot) {
+	/**
+	 * Списать {@code amount} стрел из активного слота. Ваниль обычно тратит одну, но
+	 * {@code ProjectileWeaponItem.useAmmo} спрашивает {@code EnchantmentHelper.processAmmoUse}
+	 * и чужое зачарование/мод может вернуть больше — тогда бесплатных стрел быть не должно.
+	 */
+	public static void consumeAt(Player player, int hotbarSlot, int amount) {
+		if (amount <= 0) {
+			return;
+		}
 		ItemStack quiver = player.getInventory().getItem(hotbarSlot);
 		if (!isQuiver(quiver)) {
 			return;
@@ -165,7 +172,13 @@ public final class Quiver {
 		if (selected.isEmpty()) {
 			return;
 		}
-		selected.shrink(1);
+		int take = Math.min(amount, selected.getCount());
+		if (take < amount) {
+			// рассинхрон: useAmmo взял больше, чем лежит в активном слоте; не молчим и не уходим в минус
+			FletcherMod.LOGGER.warn("Fletcher: колчан в слоте {} просит {} стрел, в активном слоте {}",
+				hotbarSlot, amount, selected.getCount());
+		}
+		selected.shrink(take);
 		if (selected.isEmpty()) {
 			items.set(index, ItemStack.EMPTY);
 		}

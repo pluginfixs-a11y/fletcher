@@ -1,6 +1,8 @@
 package fletcher.mixin;
 
 import fletcher.FletcherArrows;
+import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
+import net.minecraft.advancements.triggers.CriteriaTriggers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
@@ -8,6 +10,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.EnchantmentTags;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
@@ -20,7 +23,10 @@ import net.minecraft.world.entity.monster.piglin.PiglinAi;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.schedule.Activity;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.entity.BeehiveBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.Explosion;
@@ -244,6 +250,10 @@ public abstract class AbstractArrowMixin {
 	 * Без игрока-владельца (скелет, раздатчик) и там, где игроку нельзя ломать (приключение,
 	 * спавн-защита, граница мира), блок остаётся целым — стрела тогда просто втыкается, как обычная,
 	 * и остаётся подбираемой: платить за несостоявшийся взлом нечем.
+	 * <p>
+	 * Ломание проходит через {@code PlayerBlockBreakEvents.BEFORE/AFTER} — иначе мод защиты территорий,
+	 * который отменяет ломание игроком, стрелу не увидит. Улей дополнительно выпускает пчёл: ваниль
+	 * делает это в {@code Block#playerDestroy}, а {@code Level#destroyBlock} его не зовёт.
 	 */
 	@Inject(method = "onHitBlock", at = @At("RETURN"))
 	private void fletcher$breakBlock(BlockHitResult hit, CallbackInfo ci) {
@@ -270,6 +280,12 @@ public abstract class AbstractArrowMixin {
 		if (hardness < 0.0F || hardness > 10.0F || state.is(BlockTags.NEEDS_DIAMOND_TOOL)) {
 			return;
 		}
+		// моды защиты слушают этот же ивент, которым ваниль оборачивает ломание игроком
+		BlockEntity blockEntity = level.getBlockEntity(pos);
+		if (!PlayerBlockBreakEvents.BEFORE.invoker().beforeBlockBreak(level, owner, pos, state, blockEntity)) {
+			PlayerBlockBreakEvents.CANCELED.invoker().onBlockBreakCanceled(level, owner, pos, state, blockEntity);
+			return;
+		}
 		// playerWillDestroy сюда не зовётся, а именно в нём ваниль злит пиглинов на сундук/золото
 		// бастиона. Сначала ванильный вызов — он честно обрабатывает UNIVERSAL_ANGER вокруг игрока,
 		// затем то же самое вокруг блока: стрела летит издалека, и пиглины у сундука иначе не узнают,
@@ -289,9 +305,16 @@ public abstract class AbstractArrowMixin {
 				}
 			}
 		}
-		// dropResources=true: блок выпадает так же, как от кирки; прочность destroyBlock не смотрит,
-		// поэтому обсидиан ломается с одного попадания. Стрела расходуется только если блок исчез.
+		// пчёлы: Block#playerDestroy выпускает их и срабатывает достижение, но destroyBlock — нет
 		if (level.destroyBlock(pos, true, self, 512)) {
+			if (blockEntity instanceof BeehiveBlockEntity hive) {
+				ItemStack tool = self.getPickupItemStackOrigin();
+				if (!EnchantmentHelper.hasTag(tool, EnchantmentTags.PREVENTS_BEE_SPAWNS_WHEN_MINING)) {
+					hive.emptyAllLivingFromHive(owner, state, BeehiveBlockEntity.BeeReleaseStatus.EMERGENCY);
+				}
+				CriteriaTriggers.BEE_NEST_DESTROYED.trigger(owner, state, tool, hive.getOccupantCount());
+			}
+			PlayerBlockBreakEvents.AFTER.invoker().afterBlockBreak(level, owner, pos, state, blockEntity);
 			self.discard();
 		}
 	}

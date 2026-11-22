@@ -38,6 +38,7 @@ public abstract class ProjectileWeaponItemMixin {
 		if (used.get(DataComponents.INTANGIBLE_PROJECTILE) != null) {
 			return;
 		}
-		Quiver.consumeAt(player, slot);
+		// обычно 1, но processAmmoUse у чужого зачарования/мода может вернуть больше
+		Quiver.consumeAt(player, slot, used.getCount());
 	}
 }

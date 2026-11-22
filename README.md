@@ -99,9 +99,10 @@ Three things are deliberately vanilla-shaped rather than stronger:
 * **flint fire on blocks** — the arrow places fire exactly where flint and steel would
   (`BaseFireBlock.canBePlacedAt` → `getState` → `setBlock(..., 11)` + the same sound), but only for an
   arrow with a player owner and only where `mayUseItemAt` allows it — the very check vanilla runs
-  before using flint and steel, so spawn protection, adventure mode and region plugins refuse the
-  arrow the same way. Spread still obeys `doFireTick`, so a server that turned fire spread off does
-  not burn down;
+  before using flint and steel, so spawn protection, adventure mode and the world border refuse the
+  arrow the same way. A region/claim mod that vetoes flint and steel through its own event does not
+  see this fire; only the vanilla checks apply. Spread still obeys `doFireTick`, so a server that
+  turned fire spread off does not burn down;
 * **knockback** — computed with vanilla's own formula (`direction × force × 0.6 × (1 − knockback
   resistance))`, so Punch on the bow stacks with it instead of being replaced, and a straight-down
   hit pushes nothing, as in vanilla.
@@ -114,9 +115,13 @@ it can break up to three blocks) and gives up half the damage. It refuses what t
 a diamond pickaxe or high hardness: obsidian, crying obsidian, netherite block, ancient debris,
 respawn anchor, reinforced deepslate, ender chest, everything with a negative destroy speed (bedrock,
 barrier, command and structure blocks) and anything in `minecraft:needs_diamond_tool`. Those just
-stick like a normal arrow and are not spent. Drops are the block's own
+stick like a normal arrow and are not spent. The break goes through Fabric's
+`PlayerBlockBreakEvents.BEFORE`/`AFTER`, so a protection mod can veto it, and a broken bee nest
+releases its bees and fires the nest-destroyed trigger like vanilla mining. Drops are the block's own
 (`destroyBlock(..., true)`), so an ore still drops its item; a block without a drop table simply
-vanishes. It still needs a player owner (a skeleton's or dispenser's arrow only sticks) and still
+vanishes. A few per-block `playerDestroy` overrides do not run: ice disappears instead of melting to
+water, a turtle egg cluster vanishes whole instead of losing one egg, and the other half of a double
+plant is removed by its shape update. No drops or XP are duplicated. It still needs a player owner (a skeleton's or dispenser's arrow only sticks) and still
 asks `mayInteract`/`blockActionRestricted`, so adventure mode, spawn protection and the world border
 refuse it the way they refuse a player's break. Guarded blocks (bastion chests, gold) still anger
 nearby piglins: the arrow reproduces the `GUARDED_BY_PIGLINS` hook around the hit block, because the
@@ -176,7 +181,8 @@ tooltip shows the active arrow and how many slots are filled.
 Contents live in the vanilla `container` component (five `ItemStack`s), the active index in
 `custom_data.fletcher_quiver.active`, and `custom_data.fletcher_quiver.quiver` marks the item. Nothing
 is stored in the menu: closing the screen, moving the item, reconnecting or restarting keeps the
-quiver intact.
+quiver intact. If the quiver item itself is destroyed — lava, fire, cactus — its arrows are ejected
+like a bundle's contents instead of vanishing; a quiver that despawns drops nothing, as in vanilla.
 
 ### Resource pack
 
@@ -283,7 +289,12 @@ in its own `bundle_contents`. A real `BowItem.releaseUsing` draws the selected f
 (damage 3.0) from the hotbar quiver instead of the seven loose arrows. The shot spends exactly one
 arrow from the active slot and leaves the loose stack alone; `useAmmo` returns an unmarked projectile;
 creative spends nothing (`INTANGIBLE_PROJECTILE`); an empty active slot falls back to the inventory
-arrows; a quiver in the main inventory is ignored.
+arrows; a quiver in the main inventory is ignored. The crossbow path is covered too: its private
+`tryLoadProjectiles` charges a real crossbow from the quiver, spends one arrow, keeps the fletcher tag
+and leaves no source marker on the charged stack; a Multishot crossbow loads three projectiles from
+the same single arrow and marks only the extra two `INTANGIBLE_PROJECTILE`. Destroying the quiver
+item with lava damage runs the real `BundleItem.onDestroyed`, which must empty the `container`
+component and leave exactly one dropped stack of the five arrows in the world.
 
 ## Install
 

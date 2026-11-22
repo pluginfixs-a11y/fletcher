@@ -119,6 +119,11 @@ public class FletcherInventory implements Container {
 	/** Слот принимает только свою роль: 0 — оперение, 1 — древко, 2 — наконечник, 3 — добавка. */
 	@Override
 	public boolean canPlaceItem(int slot, ItemStack stack) {
+		if (slot < 0 || slot >= SLOT_INPUTS) {
+			// слот результата (4) не принимает ничего; без этой ветки roleForSlot(4) == roleOf(мусор)
+			// давало null == null и «мусор можно»
+			return false;
+		}
 		if (slot == SLOT_ADDON) {
 			return FletcherArrows.isAddon(stack);
 		}
