@@ -16,7 +16,7 @@ not know the id. The title is `{"translate": "fletcher.table", "fallback": "Ст
 | 0 | feather | feather, paper, leather, phantom membrane |
 | 1 | shaft | stick, bamboo, blaze rod, bone |
 | 2 | head | flint, copper/iron/gold nugget, iron ingot, amethyst shard, diamond |
-| 3 | addon (optional) | gunpowder, string |
+| 3 | addon (optional) | gunpowder |
 | 4 | result: 4 arrows per set | — |
 
 The order is strict: a slot takes only its own role. A part of the wrong role does not go in by
@@ -129,11 +129,10 @@ Slot 3 takes one optional addon and changes no stats; an empty slot is a normal 
 | addon | item | effect |
 |---|---|---|
 | gunpowder | gunpowder | explodes on contact with a block or an entity, destroys the arrow |
-| string | string | on a block hit, pulls the shooter to the arrow; on an entity hit, nothing |
 
 **Gunpowder** replaces the ordinary hit: the arrow deals no separate arrow damage and applies no
 on-hit part specials, it just explodes and is spent. Explosion power is 0.8 — the ghast's
-`LargeFireball` is 1.0 — with no fire, and blocks break regardless of `mobGriefing`
+`LargeFireball` is 1.0 — and blocks break regardless of `mobGriefing`
 (`ExplosionInteraction.BLOCK`, as the owner asked); obsidian, netherite and other blast-resistant
 blocks still survive that 0.8. Entity damage is **doubled** by a custom
 `ExplosionDamageCalculator` while block damage stays at 0.8. Because the arrow dies on the first
@@ -141,15 +140,16 @@ contact, its piercing is forced to 0 (crossbow Piercing included) and the lore s
 instead of damage/piercing. The explosion is credited to the owning player so kills count, and the
 shooter is not excluded from the blast.
 
-**String** is a grappling hook: the arrow flies and hits exactly like a normal one, and an entity hit
-does nothing extra. On a block hit, the owner (not a spectator or passenger) is pulled toward the
-stuck arrow at 15 blocks per second for the distance divided by that speed, up to 64 blocks; the pull
-stops within two blocks, when the arrow is picked up, or at the end of the count. Velocity is sent to
-the client every tick, `fallDistance` is reset during the pull, and the arrow stays in the block and
-can be picked up. The pull counter lives on the arrow entity and is not persisted: a chunk unload or
-restart during the pull stops it (the arrow itself survives). A string arrow with the iron-ingot head
-suppresses the "breaks the block" special — otherwise the anchor would be gone; other head specials
-still work.
+A fiery part in the set makes the blast itself fiery: with a **blaze rod** shaft the explosion gets
+`fire = true` (vanilla then scatters fire), and the lore reads `Взрыв: 0.8 (огонь)`. The arrow's own
+"sets the target on fire" special is still replaced by the explosion — the fire comes from the blast.
+Like the block damage, that fire is not gated by `mobGriefing` (`ServerExplosion.createFire` has no
+gamerule check), which follows the same "blocks always break" rule. A set with a membrane feather and
+gunpowder stays a plain blast and keeps its "almost no gravity" special.
+
+Arrows crafted before 1.5.0 may still carry the removed `harpoon` tag and the old
+«Притягивает к блоку» name/lore: nothing reads that tag any more, so they fly as ordinary fletcher
+arrows with their stats and do not pull.
 
 ## Mechanics
 
@@ -213,14 +213,14 @@ A diamond arrow reports piercing 3, the lore of a three-special arrow has six li
 `ignite/gravity/glow/knockback` clamp to 30 / 0.005 / 1200 / 2, and bamboo/paper/stick report no
 special at all.
 
-Slot 3 is covered as well: gunpowder and string are accepted, other items are refused, an empty slot
-still makes a normal arrow, one addon is consumed per set, and `F`/drag/shift-click/`CLONE`/`Q` follow
-the same no-dupe rules. A gunpowder arrow removes dirt even with `mobGriefing=false` and is destroyed;
-an entity hit also detonates (checked by the block under the pig, since entity sections are hidden
-before the first tick — the damage itself is vanilla explosion code); a string arrow pulls the owner
-toward the hit block (the test checks the velocity direction), does nothing on an entity hit, refuses
-an ownerless arrow and a shot beyond 64 blocks, and an iron-ingot head with string leaves the anchor
-block intact.
+Slot 3 is covered as well: gunpowder is accepted, string is refused through the container, drag,
+`F`/hotbar swap and shift-click, an empty slot still makes a normal arrow, one addon is consumed per
+set, and `F`/drag/shift-click/`CLONE`/`Q` follow the same no-dupe rules. A gunpowder arrow removes
+dirt even with `mobGriefing=false` and is destroyed; an entity hit also detonates (checked by the
+block under the pig, since entity sections are hidden before the first tick — the damage itself is
+vanilla explosion code). A blaze-rod set marks the explosion as fiery in the item tag and in the
+mixin field, and a real detonation over a dirt platform actually leaves fire; a stick-shaft set and a
+membrane set stay non-fiery (the membrane keeps its gravity special).
 
 ## Install
 

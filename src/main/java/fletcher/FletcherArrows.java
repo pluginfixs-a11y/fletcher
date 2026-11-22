@@ -54,8 +54,8 @@ public final class FletcherArrows {
 	public static final String KEY_BREAK = "break";
 	/** 1 — взрывается при столкновении и уничтожается. */
 	public static final String KEY_EXPLODE = "explode";
-	/** 1 — при попадании в блок притягивает стрелка. */
-	public static final String KEY_HARPOON = "harpoon";
+	/** 1 — взрыв огненный: в составе было горящее древко (огненный стержень). */
+	public static final String KEY_EXPLODE_FIRE = "explode_fire";
 	/** Сила отбрасывания в единицах зачарования «Удар» (2 уровня = 2.0). */
 	public static final String KEY_KNOCKBACK = "knockback";
 
@@ -68,10 +68,6 @@ public final class FletcherArrows {
 	public static final float EXPLOSION_POWER = 0.8F;
 	/** Урон взрыва по сущностям множитель: блоки остаются на 0.8, сущности бьются вдвое сильнее. */
 	public static final float EXPLOSION_ENTITY_MULTIPLIER = 2.0F;
-	/** Гарпун тянет 15 блоков в секунду = 0.75 блока за тик. */
-	public static final double HARPOON_SPEED = 0.75D;
-	/** Дальше этого гарпун не тянет, стрела просто втыкается. */
-	public static final double HARPOON_RANGE = 64.0D;
 
 	private static final float MIN_DRAG = 0.975F;
 	private static final float MAX_DRAG = 0.997F;
@@ -97,7 +93,7 @@ public final class FletcherArrows {
 	private static final Map<Item, Part> HEADS = new HashMap<>();
 	/** Особые свойства: только у стоящих материалов, у «дешёвых» (бумага, бамбук) их нет. */
 	private static final Map<Item, Special> SPECIALS = new HashMap<>();
-	/** Добавки слота 3: порох и нитка. */
+	/** Добавки слота 3: пока только порох. */
 	private static final Map<Item, Addon> ADDONS = new HashMap<>();
 	private static final List<Item> FEATHER_ITEMS;
 	private static final List<Item> SHAFT_ITEMS;
@@ -142,9 +138,7 @@ public final class FletcherArrows {
 		SPECIALS.put(Items.IRON_INGOT, new Special(0.0F, 0.0F, 0, false, 0.0F, true, "Ломает блок, расходуясь"));
 
 		ADDONS.put(Items.GUNPOWDER, new Addon(Items.GUNPOWDER, "gunpowder", "порох",
-			"Взрывается при попадании", true, false));
-		ADDONS.put(Items.STRING, new Addon(Items.STRING, "string", "нитка",
-			"Притягивает к блоку", false, true));
+			"Взрывается при попадании", true));
 
 		FEATHER_ITEMS = List.copyOf(FEATHERS.keySet());
 		SHAFT_ITEMS = List.copyOf(SHAFTS.keySet());
@@ -164,9 +158,9 @@ public final class FletcherArrows {
 	public record Part(float damage, float drag, int pierce, String label) {
 	}
 
-	/** Добавка слота 3: порох или нитка. Статы не меняет, включает свой спецэффект. */
-	public record Addon(Item item, String key, String label, String effect, boolean explode, boolean harpoon) {
-		public static final Addon NONE = new Addon(Items.AIR, "none", "", "", false, false);
+	/** Добавка слота 3: порох. Статы не меняет, включает свой спецэффект. */
+	public record Addon(Item item, String key, String label, String effect, boolean explode) {
+		public static final Addon NONE = new Addon(Items.AIR, "none", "", "", false);
 
 		public boolean isEmpty() {
 			return this.item == Items.AIR;
@@ -310,7 +304,7 @@ public final class FletcherArrows {
 
 	/**
 	 * Собирает стрелу из трёх обязательных слотов (оперение, древко, наконечник) и необязательной
-	 * добавки (порох/нитка). Любой пустой или чужой обязательный слот — {@link ItemStack#EMPTY}.
+	 * добавки (порох). Любой пустой или чужой обязательный слот — {@link ItemStack#EMPTY}.
 	 */
 	public static ItemStack build(ItemStack featherStack, ItemStack shaftStack, ItemStack headStack) {
 		return build(featherStack, shaftStack, headStack, ItemStack.EMPTY);
@@ -333,13 +327,10 @@ public final class FletcherArrows {
 		Special featherSpecial = specialOf(featherStack);
 		Special shaftSpecial = specialOf(shaftStack);
 		Special headSpecial = specialOf(headStack);
-		// гарпун держится за блок: железный наконечник не должен его сломать
-		if (addon.harpoon() && headSpecial.breaksBlock()) {
-			headSpecial = new Special(headSpecial.ignite(), headSpecial.gravity(), headSpecial.glow(),
-				headSpecial.fire(), headSpecial.knockback(), false, "");
-		}
 		Special special = combine(featherSpecial, shaftSpecial, headSpecial);
-		// порох заменяет обычное попадание: пробивание и on-hit свойства не сработают
+		// порох заменяет обычное попадание: пробивание и on-hit свойства не сработают.
+		// Горящая часть (огненный стержень) делает сам взрыв огненным.
+		boolean explodeFire = addon.explode() && special.ignite() > 0.0F;
 		if (addon.explode()) {
 			pierce = 0;
 			special = new Special(0.0F, special.gravity(), 0, false, 0.0F, false, "");
@@ -372,9 +363,9 @@ public final class FletcherArrows {
 		}
 		if (addon.explode()) {
 			tag.putBoolean(KEY_EXPLODE, true);
-		}
-		if (addon.harpoon()) {
-			tag.putBoolean(KEY_HARPOON, true);
+			if (explodeFire) {
+				tag.putBoolean(KEY_EXPLODE_FIRE, true);
+			}
 		}
 		CustomData.update(DataComponents.CUSTOM_DATA, out, root -> root.put(NBT_ROOT, tag));
 
@@ -385,7 +376,7 @@ public final class FletcherArrows {
 		List<Component> lore = new ArrayList<>();
 		// взрыв заменяет обычный урон; абсолютный урон наконечника тут ничего не значит
 		lore.add(Component.literal(addon.explode()
-			? "Взрыв: " + EXPLOSION_POWER
+			? "Взрыв: " + EXPLOSION_POWER + (explodeFire ? " (огонь)" : "")
 			: "Урон: " + damagePercent(damage)).withStyle(ChatFormatting.GRAY));
 		// таблица процентов снята с ванильной гравитации: при своей (мембрана) она врёт в меньшую сторону
 		lore.add(Component.literal(special.gravity() > 0.0F
@@ -525,10 +516,10 @@ public final class FletcherArrows {
 		return tag != null && tag.getBooleanOr(KEY_EXPLODE, false);
 	}
 
-	/** Притягивает ли стрела стрелка к блоку, в который воткнулась. */
-	public static boolean harpoons(ItemStack arrow) {
+	/** Огненный ли взрыв: в составе была горящая часть. */
+	public static boolean explodesFire(ItemStack arrow) {
 		CompoundTag tag = dataOf(arrow);
-		return tag != null && tag.getBooleanOr(KEY_HARPOON, false);
+		return tag != null && tag.getBooleanOr(KEY_EXPLODE_FIRE, false);
 	}
 
 	/** Сила отбрасывания цели в единицах «Удара»; 0 — только ванильное. */
