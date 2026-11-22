@@ -3,6 +3,7 @@ package fletcher.mixin;
 import fletcher.FletcherArrows;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
@@ -133,9 +134,10 @@ public abstract class AbstractArrowMixin {
 
 	/**
 	 * Гарпун: пока стрела торчит в блоке, тянем владельца к ней. 3 блока в секунду — это
-	 * {@link FletcherArrows#HARPOON_SPEED} за тик. Скорость перезаписывается каждый тик, поэтому
-	 * гравитация не успевает накопиться, а вертикаль идёт ровно к анкеру (не вверх).
-	 * Останавливаемся в двух блоках, по истечении срока или если стрелу подобрали.
+	 * {@link FletcherArrows#HARPOON_SPEED} за тик. Скорость отправляем клиенту пакетом сразу:
+	 * {@code hurtMarked} доедет только следующим тиком, уже после трения/гравитации игрока, и
+	 * клиент получил бы половину скорости. Останавливаемся в двух блоках, по истечении срока
+	 * или если стрелу подобрали.
 	 */
 	@Inject(method = "tick", at = @At("HEAD"))
 	private void fletcher$pull(CallbackInfo ci) {
@@ -158,7 +160,12 @@ public abstract class AbstractArrowMixin {
 		}
 		Vec3 pull = delta.scale(FletcherArrows.HARPOON_SPEED / distance);
 		owner.setDeltaMovement(pull);
-		owner.hurtMarked = true;
+		// отправляем точную скорость сейчас; hurtMarked отправил бы её на тик позже и уже
+		// после трения, то есть 3 б/с превратились бы в ~1.6 б/с
+		owner.hurtMarked = false;
+		if (owner.connection != null) {
+			owner.connection.send(new ClientboundSetEntityMotionPacket(owner));
+		}
 		owner.resetFallDistance();
 		this.fletcher$harpoonTicks--;
 	}

@@ -243,6 +243,8 @@ public final class SelfTest {
 		// убрали добавку — результат снова обычная стрела
 		inventory.setItem(FletcherInventory.SLOT_ADDON, ItemStack.EMPTY);
 		boolean addonRemoved = !FletcherArrows.explodes(inventory.getItem(FletcherInventory.SLOT_OUTPUT));
+		// и вернули одну, чтобы финальный shift-click проверил расход последней добавки
+		inventory.setItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.GUNPOWDER));
 
 		// зачарование не слабеет, а состав перечитывается: 4 уровня пробивания уцелевают после смены
 		// предмета, но урон и инерция берутся из нового стека (иначе проверка была бы тавтологией)
@@ -868,11 +870,17 @@ public final class SelfTest {
 			hitBlock(grapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
 			grapple.tick();
 			Vec3 pullVelocity = owner.getDeltaMovement();
-			harpoonPulls = pullVelocity.z < -0.14 && pullVelocity.z > -0.16
+			boolean pullMagnitude = pullVelocity.z < -0.14 && pullVelocity.z > -0.16
 				&& Math.abs(pullVelocity.y) < 0.05;
+
+			// уже начатое притягивание останавливается, когда игрок оказался в двух блоках
+			owner.setPos(1000.5, 200.5, 1002.0);
+			owner.setDeltaMovement(Vec3.ZERO);
+			grapple.tick();
+			boolean midPullStop = owner.getDeltaMovement().lengthSqr() < 1.0E-9;
 			grapple.discard();
 
-			// в двух блоках от анкера притягивание не включается
+			// в двух блоках от анкера притягивание не включается вообще
 			level.setBlock(stone, Blocks.STONE.defaultBlockState(), 3);
 			owner.setPos(1000.5, 200.5, 1002.0);
 			owner.setDeltaMovement(Vec3.ZERO);
@@ -880,8 +888,10 @@ public final class SelfTest {
 			closeGrapple.setOwner(owner);
 			hitBlock(closeGrapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
 			closeGrapple.tick();
-			harpoonStop = owner.getDeltaMovement().lengthSqr() < 1.0E-9;
+			boolean startStop = owner.getDeltaMovement().lengthSqr() < 1.0E-9;
 			closeGrapple.discard();
+			harpoonPulls = pullMagnitude;
+			harpoonStop = midPullStop && startStop;
 
 			// попадание в сущность ничего не тянет
 			Pig grappleTarget = pig(level, spawned);
