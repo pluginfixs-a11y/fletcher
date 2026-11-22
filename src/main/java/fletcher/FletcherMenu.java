@@ -26,9 +26,9 @@ import java.util.List;
  * с пятью слотами в ряд. Свои {@code MenuType}/экран server-side мод показать не может,
  * зато можно подменить серверные слоты и полностью контролировать клики.
  * <p>
- * Слоты: 0 — оперение, 1 — древко, 2 — наконечник, 3 — заблокирован, 4 — результат.
- * Пустые слоты показывают случайную подсказку своей роли; подсказка живёт в слоте отображения,
- * а не в контейнере, поэтому её нельзя забрать.
+ * Слоты: 0 — оперение, 1 — древко, 2 — наконечник, 3 — добавка (порох/нитка), 4 — результат.
+ * Пустые слоты показывают случайную подсказку своей роли/добавки; подсказка живёт в слоте
+ * отображения, а не в контейнере, поэтому её нельзя забрать.
  * <p>
  * Подсказка прячется, пока в руке что-то есть ({@link PreviewSlot#getItem()}). Это не косметика:
  * ванильные пути кладут предмет через {@code Slot#safeInsert} и раздачу драгом, а они читают
@@ -87,7 +87,8 @@ public class FletcherMenu extends HopperMenu {
 			}
 			if (i == SLOT_ADDON) {
 				Item item = pick(FletcherArrows.addonPool(), this.fletcher.getPreview(i));
-				this.fletcher.setPreview(i, hint(item, "addon", "добавка"));
+				FletcherArrows.Addon addon = FletcherArrows.addonOf(new ItemStack(item));
+				this.fletcher.setPreview(i, hint(item, addon.key(), "добавка"));
 				continue;
 			}
 			FletcherArrows.Role role = FletcherArrows.roleForSlot(i);

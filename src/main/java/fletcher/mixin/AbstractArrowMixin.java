@@ -10,7 +10,6 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -121,16 +120,22 @@ public abstract class AbstractArrowMixin {
 	 */
 	@Inject(method = "onHitEntity", at = @At("HEAD"), cancellable = true)
 	private void fletcher$explodeOnEntity(EntityHitResult hit, CallbackInfo ci) {
-		if (this.fletcher$explode) {
-			fletcher$detonate(hit.getLocation());
-			ci.cancel();
+		if (!this.fletcher$explode) {
+			return;
 		}
+		AbstractArrow self = (AbstractArrow) (Object) this;
+		if (!(self.level() instanceof ServerLevel)) {
+			return;
+		}
+		fletcher$detonate(hit.getLocation());
+		ci.cancel();
 	}
 
 	/**
 	 * Гарпун: пока стрела торчит в блоке, тянем владельца к ней. 3 блока в секунду — это
-	 * {@link FletcherArrows#HARPOON_SPEED} за тик; 0.08 по Y компенсирует гравитацию, иначе игрок
-	 * проседает. Останавливаемся в двух блоках, по истечении срока или если стрелу подобрали.
+	 * {@link FletcherArrows#HARPOON_SPEED} за тик. Скорость перезаписывается каждый тик, поэтому
+	 * гравитация не успевает накопиться, а вертикаль идёт ровно к анкеру (не вверх).
+	 * Останавливаемся в двух блоках, по истечении срока или если стрелу подобрали.
 	 */
 	@Inject(method = "tick", at = @At("HEAD"))
 	private void fletcher$pull(CallbackInfo ci) {
@@ -152,7 +157,7 @@ public abstract class AbstractArrowMixin {
 			return;
 		}
 		Vec3 pull = delta.scale(FletcherArrows.HARPOON_SPEED / distance);
-		owner.setDeltaMovement(pull.x, pull.y + 0.08, pull.z);
+		owner.setDeltaMovement(pull);
 		owner.hurtMarked = true;
 		owner.resetFallDistance();
 		this.fletcher$harpoonTicks--;
@@ -165,18 +170,24 @@ public abstract class AbstractArrowMixin {
 		if (!(self.level() instanceof ServerLevel level)) {
 			return;
 		}
-		Entity source = self.getOwner() instanceof Entity owner ? owner : self;
-		level.explode(source, at.x, at.y, at.z, FletcherArrows.EXPLOSION_POWER, false,
+		// источник — сама стрела: kill credit всё равно уходит владельцу через Projectile.getOwner,
+		// а стрелок не исключается из урона взрыва, как было бы с source = игрок
+		level.explode(self, at.x, at.y, at.z, FletcherArrows.EXPLOSION_POWER, false,
 			Level.ExplosionInteraction.BLOCK);
 		self.discard();
 	}
 
 	@Inject(method = "onHitBlock", at = @At("HEAD"), cancellable = true)
 	private void fletcher$explodeOnBlock(BlockHitResult hit, CallbackInfo ci) {
-		if (this.fletcher$explode) {
-			fletcher$detonate(hit.getLocation());
-			ci.cancel();
+		if (!this.fletcher$explode) {
+			return;
 		}
+		AbstractArrow self = (AbstractArrow) (Object) this;
+		if (!(self.level() instanceof ServerLevel)) {
+			return;
+		}
+		fletcher$detonate(hit.getLocation());
+		ci.cancel();
 	}
 
 	@Inject(method = "onHitEntity", at = @At("HEAD"))
@@ -364,9 +375,13 @@ public abstract class AbstractArrowMixin {
 		if (this.fletcher$ignite > 0.0F && !self.isOnFire()) {
 			self.setRemainingFireTicks(600);
 		}
-		// не ослабляем зачарование: у арбалета с «Пробиванием» уровень уже выставлен конструктором
+		// не ослабляем зачарование: у арбалета с «Пробиванием» уровень уже выставлен конструктором.
+		// У взрывной стрелы наоборот — обнуляем: она исчезает на первом контакте.
 		int pierce = Math.max(self.getPierceLevel(), FletcherArrows.pierceOf(arrow));
-		if (pierce > 0) {
+		if (this.fletcher$explode) {
+			pierce = 0;
+		}
+		if (pierce > 0 || this.fletcher$explode) {
 			((AbstractArrowInvoker) self).fletcher$setPierceLevel((byte) pierce);
 		}
 	}

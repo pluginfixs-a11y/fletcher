@@ -240,6 +240,10 @@ public final class SelfTest {
 		boolean blocked = menu.getCarried().getCount() == FletcherArrows.ARROWS_PER_CRAFT
 			&& inventory.getItem(0).getCount() == 1;
 
+		// убрали добавку — результат снова обычная стрела
+		inventory.setItem(FletcherInventory.SLOT_ADDON, ItemStack.EMPTY);
+		boolean addonRemoved = !FletcherArrows.explodes(inventory.getItem(FletcherInventory.SLOT_OUTPUT));
+
 		// зачарование не слабеет, а состав перечитывается: 4 уровня пробивания уцелевают после смены
 		// предмета, но урон и инерция берутся из нового стека (иначе проверка была бы тавтологией)
 		boolean pierceKept = false;
@@ -284,14 +288,15 @@ public final class SelfTest {
 		boolean noGhostOutput = menu.getCarried().isEmpty();
 
 		boolean ok = slots && preview && previewHidden && wrongRole && placed && placedOne && merged && autoPlaced
-			&& addonAutoPlaced && explosiveOutput && busyHand && took && blocked && pierceKept
+			&& addonAutoPlaced && explosiveOutput && busyHand && took && blocked && addonRemoved && pierceKept
 			&& outputLocked && addonPreviewLocked && drained && noGhostOutput;
 		LOGGER.info("Fletcher: меню — слоты {}, подсказка {}, спрятана {}, чужая роль {}, кладка {}, правая {}, долив {}, "
 				+ "автораскладка {}, добавка {}, взрывной результат {}, занятая рука {}, выдача {}, блок {}, "
-				+ "пробивание-не-слабеет {}, блокировка {}, подсказка добавки {}, расход {}, без пустышки {}",
+				+ "добавка убрана {}, пробивание-не-слабеет {}, блокировка {}, подсказка добавки {}, расход {}, без пустышки {}",
 			ok(slots), ok(preview), ok(previewHidden), ok(wrongRole), ok(placed), ok(placedOne), ok(merged),
 			ok(autoPlaced), ok(addonAutoPlaced), ok(explosiveOutput), ok(busyHand), ok(took), ok(blocked),
-			ok(pierceKept), ok(outputLocked), ok(addonPreviewLocked), ok(drained), ok(noGhostOutput));
+			ok(addonRemoved), ok(pierceKept), ok(outputLocked), ok(addonPreviewLocked), ok(drained),
+			ok(noGhostOutput));
 		return ok;
 	}
 
@@ -576,7 +581,9 @@ public final class SelfTest {
 		boolean ironFlight;
 		boolean explodesBlock;
 		boolean explodesEntity;
+		boolean explodesFlight;
 		boolean harpoonPulls;
+		boolean harpoonStop;
 		boolean harpoonEntityNoPull;
 		boolean harpoonOwnerless;
 		boolean harpoonRange;
@@ -826,6 +833,16 @@ public final class SelfTest {
 				level.getGameRules().set(GameRules.MOB_GRIEFING, griefBefore, level.getServer());
 			}
 
+			// порох в реальном полёте: стрела сама долетает, взрывается, блок исчезает
+			level.setBlock(stone, Blocks.DIRT.defaultBlockState(), 3);
+			Arrow bombFlight = new Arrow(level, 1000.5D, 206.0D, 1000.5D, explosiveArrow, new ItemStack(Items.BOW));
+			bombFlight.setOwner(owner);
+			bombFlight.shoot(0.0D, -1.0D, 0.0D, 1.5F, 0.0F);
+			for (int i = 0; i < 20 && !bombFlight.isRemoved(); i++) {
+				bombFlight.tick();
+			}
+			explodesFlight = level.getBlockState(stone).isAir() && bombFlight.isRemoved();
+
 			// порох по сущности: взрыв происходит в точке попадания, стрела уничтожена.
 			// Урон свинье не проверяем: до первого тика секции сущностей скрыты от запросов взрыва,
 			// поэтому взрыв проверяем по блоку под свиньёй (ванильный урон взрыва — не наша логика).
@@ -850,8 +867,21 @@ public final class SelfTest {
 			grapple.setOwner(owner);
 			hitBlock(grapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
 			grapple.tick();
-			harpoonPulls = owner.getDeltaMovement().z < -0.1;
+			Vec3 pullVelocity = owner.getDeltaMovement();
+			harpoonPulls = pullVelocity.z < -0.14 && pullVelocity.z > -0.16
+				&& Math.abs(pullVelocity.y) < 0.05;
 			grapple.discard();
+
+			// в двух блоках от анкера притягивание не включается
+			level.setBlock(stone, Blocks.STONE.defaultBlockState(), 3);
+			owner.setPos(1000.5, 200.5, 1002.0);
+			owner.setDeltaMovement(Vec3.ZERO);
+			Arrow closeGrapple = new Arrow(level, 1000.5D, 200.5D, 1000.5D, harpoonArrow, new ItemStack(Items.BOW));
+			closeGrapple.setOwner(owner);
+			hitBlock(closeGrapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			closeGrapple.tick();
+			harpoonStop = owner.getDeltaMovement().lengthSqr() < 1.0E-9;
+			closeGrapple.discard();
 
 			// попадание в сущность ничего не тянет
 			Pig grappleTarget = pig(level, spawned);
@@ -951,23 +981,24 @@ public final class SelfTest {
 				+ "сверху не толкает {}, кремень огонь {}, без владельца огня нет {}, "
 				+ "слиток -50% {}, слиток ломает {}, слиток расходуется {}, неломаемое цело {}, прочное цело {}, "
 				+ "без владельца не ломает {}, граница мира {}, приключение {}, в полёте {}, "
-				+ "порох блок {}, порох сущность {}, гарпун тянет {}, гарпун сущность {}, гарпун без владельца {}, "
-				+ "гарпун 64 {}, гарпун анкер {}, "
+				+ "порох блок {}, порох сущность {}, порох полёт {}, гарпун тянет {}, гарпун стоп {}, "
+				+ "гарпун сущность {}, гарпун без владельца {}, гарпун 64 {}, гарпун анкер {}, "
 				+ "алмаз пробивание {}, лор {}, без свойств у дешёвых {}, зажим подделки {}, обычная стрела {}",
 			ok(glide), ok(lit), burntTicks, ok(glows), push, vanillaPush, ok(noEffectInIFrames),
 			ok(ownerlessBurns), ok(noDownPush), ok(firePlaced), ok(fireRespectsOwner),
 			ok(ironHalves), ok(ironBreaks), ok(ironSpends), ok(ironSparesUnbreakable),
 			ok(ironSparesDurable), ok(ironRespectsOwner), ok(ironRespectsBorder), ok(ironRespectsAdventure),
-			ok(ironFlight), ok(explodesBlock), ok(explodesEntity), ok(harpoonPulls), ok(harpoonEntityNoPull),
-			ok(harpoonOwnerless), ok(harpoonRange), ok(harpoonKeepsBlock),
+			ok(ironFlight), ok(explodesBlock), ok(explodesEntity), ok(explodesFlight), ok(harpoonPulls),
+			ok(harpoonStop), ok(harpoonEntityNoPull), ok(harpoonOwnerless), ok(harpoonRange),
+			ok(harpoonKeepsBlock),
 			ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials),
 			ok(vanillaPlain));
 		return glide && lit && ignites && glows && push > vanillaPush + 0.5 && noEffectInIFrames
 			&& ownerlessBurns && noDownPush && firePlaced && fireRespectsOwner
 			&& ironHalves && ironBreaks && ironSpends && ironSparesUnbreakable && ironSparesDurable
 			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironFlight
-			&& explodesBlock && explodesEntity && harpoonPulls && harpoonEntityNoPull
-			&& harpoonOwnerless && harpoonRange && harpoonKeepsBlock
+			&& explodesBlock && explodesEntity && explodesFlight && harpoonPulls && harpoonStop
+			&& harpoonEntityNoPull && harpoonOwnerless && harpoonRange && harpoonKeepsBlock
 			&& diamondPierce && loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
 	}
 

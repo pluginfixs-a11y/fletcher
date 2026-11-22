@@ -133,18 +133,22 @@ Slot 3 takes one optional addon and changes no stats; an empty slot is a normal 
 
 **Gunpowder** replaces the ordinary hit: the arrow deals no separate arrow damage and applies no
 on-hit part specials, it just explodes and is spent. Explosion power is 0.8 — the ghast's
-`LargeFireball` is 1.0 — with no fire, and blocks always break (`ExplosionInteraction.BLOCK`, so
-even `mobGriefing=false` does not stop it, as the owner asked). Because the arrow dies on the first
-contact, its piercing is forced to 0 and the lore shows `Взрыв: 0.8` instead of damage/piercing.
-The explosion is credited to the owning player so kills count.
+`LargeFireball` is 1.0 — with no fire, and blocks break regardless of `mobGriefing`
+(`ExplosionInteraction.BLOCK`, as the owner asked); obsidian, netherite and other blast-resistant
+blocks still survive that 0.8. Because the arrow dies on the first contact, its piercing is forced to
+0 (crossbow Piercing included) and the lore shows `Взрыв: 0.8` instead of damage/piercing. The
+explosion is credited to the owning player so kills count, and the shooter is not excluded from the
+blast.
 
 **String** is a grappling hook: the arrow flies and hits exactly like a normal one, and an entity hit
 does nothing extra. On a block hit, the owner (not a spectator or passenger) is pulled toward the
 stuck arrow at 3 blocks per second for the distance divided by that speed, up to 64 blocks; the pull
 stops within two blocks, when the arrow is picked up, or at the end of the count. Velocity is sent to
 the client every tick, `fallDistance` is reset during the pull, and the arrow stays in the block and
-can be picked up. A string arrow with the iron-ingot head suppresses the "breaks the block" special —
-otherwise the anchor would be gone; other head specials still work.
+can be picked up. The pull counter lives on the arrow entity and is not persisted: a chunk unload or
+restart during the pull stops it (the arrow itself survives). A string arrow with the iron-ingot head
+suppresses the "breaks the block" special — otherwise the anchor would be gone; other head specials
+still work.
 
 ## Mechanics
 

@@ -379,7 +379,7 @@ public final class FletcherArrows {
 		String suffix = addon.isEmpty() ? "" : " · " + addon.label();
 		out.set(DataComponents.CUSTOM_NAME,
 			Component.literal("Стрела · " + head.label() + " / " + feather.label() + suffix)
-				.withStyle(head.pierce() > 0 || special.glow() > 0 ? ChatFormatting.AQUA : ChatFormatting.WHITE));
+				.withStyle(pierce > 0 || special.glow() > 0 ? ChatFormatting.AQUA : ChatFormatting.WHITE));
 		List<Component> lore = new ArrayList<>();
 		// взрыв заменяет обычный урон; абсолютный урон наконечника тут ничего не значит
 		lore.add(Component.literal(addon.explode()
