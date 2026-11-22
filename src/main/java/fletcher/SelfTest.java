@@ -870,8 +870,8 @@ public final class SelfTest {
 			hitBlock(grapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
 			grapple.tick();
 			Vec3 pullVelocity = owner.getDeltaMovement();
-			boolean pullMagnitude = pullVelocity.z < -0.14 && pullVelocity.z > -0.16
-				&& Math.abs(pullVelocity.y) < 0.02;
+			boolean pullMagnitude = pullVelocity.z < -0.74 && pullVelocity.z > -0.76
+				&& Math.abs(pullVelocity.y) < 0.1;
 
 			// уже начатое притягивание останавливается, когда игрок оказался в двух блоках
 			owner.setPos(1000.5, 200.5, 1002.0);

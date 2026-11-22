@@ -66,8 +66,10 @@ public final class FletcherArrows {
 	public static final int ARROWS_PER_CRAFT = 4;
 	/** Гаст взрывает на 1.0; «чуть меньше» — 0.8. */
 	public static final float EXPLOSION_POWER = 0.8F;
-	/** Гарпун тянет 3 блока в секунду = 0.15 блока за тик. */
-	public static final double HARPOON_SPEED = 0.15D;
+	/** Урон взрыва по сущностям множитель: блоки остаются на 0.8, сущности бьются вдвое сильнее. */
+	public static final float EXPLOSION_ENTITY_MULTIPLIER = 2.0F;
+	/** Гарпун тянет 15 блоков в секунду = 0.75 блока за тик. */
+	public static final double HARPOON_SPEED = 0.75D;
 	/** Дальше этого гарпун не тянет, стрела просто втыкается. */
 	public static final double HARPOON_RANGE = 64.0D;
 

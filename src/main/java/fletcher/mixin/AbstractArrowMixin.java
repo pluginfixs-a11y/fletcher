@@ -11,6 +11,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -23,6 +24,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gamerules.GameRules;
+import net.minecraft.world.level.Explosion;
+import net.minecraft.world.level.ExplosionDamageCalculator;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -74,6 +77,15 @@ public abstract class AbstractArrowMixin {
 	private float fletcher$knockback;
 	@Unique
 	private boolean fletcher$applied;
+	/** Взрыв бьёт сущности вдвое сильнее, не меняя урон по блокам. */
+	@Unique
+	private static final ExplosionDamageCalculator FLETCHER_EXPLOSION_DAMAGE = new ExplosionDamageCalculator() {
+		@Override
+		public float getEntityDamageAmount(Explosion explosion, Entity entity, float exposure) {
+			return super.getEntityDamageAmount(explosion, entity, exposure)
+				* FletcherArrows.EXPLOSION_ENTITY_MULTIPLIER;
+		}
+	};
 	/** Направление полёта в момент удара: ваниль после удара гасит скорость, а отбрасывать надо по нему. */
 	@Unique
 	private double fletcher$dirX;
@@ -181,9 +193,10 @@ public abstract class AbstractArrowMixin {
 			return;
 		}
 		// источник — сама стрела: kill credit всё равно уходит владельцу через Projectile.getOwner,
-		// а стрелок не исключается из урона взрыва, как было бы с source = игрок
-		level.explode(self, at.x, at.y, at.z, FletcherArrows.EXPLOSION_POWER, false,
-			Level.ExplosionInteraction.BLOCK);
+		// а стрелок не исключается из урона взрыва; кастомный калькулятор бьёт сущности ×2,
+		// не трогая стандартный урон по блокам
+		level.explode(self, null, FLETCHER_EXPLOSION_DAMAGE, at.x, at.y, at.z,
+			FletcherArrows.EXPLOSION_POWER, false, Level.ExplosionInteraction.BLOCK);
 		self.discard();
 	}
 
