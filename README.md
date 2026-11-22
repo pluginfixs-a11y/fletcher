@@ -118,7 +118,9 @@ stick like a normal arrow and are not spent. Drops are the block's own
 (`destroyBlock(..., true)`), so an ore still drops its item; a block without a drop table simply
 vanishes. It still needs a player owner (a skeleton's or dispenser's arrow only sticks) and still
 asks `mayInteract`/`blockActionRestricted`, so adventure mode, spawn protection and the world border
-refuse it the way they refuse a player's break.
+refuse it the way they refuse a player's break. Guarded blocks (bastion chests, gold) still anger
+nearby piglins: the arrow reproduces the `GUARDED_BY_PIGLINS` hook around the hit block, because the
+shooter can be outside vanilla's 16-block anger radius. Their chase range stays vanilla.
 
 ## Mechanics
 

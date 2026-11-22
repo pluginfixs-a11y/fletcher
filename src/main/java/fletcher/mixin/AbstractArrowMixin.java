@@ -214,9 +214,12 @@ public abstract class AbstractArrowMixin {
 		// кто его сломал. Второй цикл повторяет тело PiglinAi.setAngerTarget (ANGRY_AT + UNIVERSAL_ANGER).
 		if (state.is(BlockTags.GUARDED_BY_PIGLINS)) {
 			PiglinAi.angerNearbyPiglins(level, owner, false);
+			// самопроверка этот путь не покрывает: свежеспавненный пиглин до онбординга секций
+			// не виден getEntitiesOfClass (та же причина, что у дропа); в игре чанк уже тикает
 			for (Piglin piglin : level.getEntitiesOfClass(Piglin.class, new AABB(pos).inflate(16.0D))) {
 				if (piglin.getBrain().isActive(Activity.IDLE)
 					&& !owner.isInvisible() && piglin.canAttack(owner)) {
+					piglin.getBrain().eraseMemory(MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
 					piglin.getBrain().setMemoryWithExpiry(MemoryModuleType.ANGRY_AT, owner.getUUID(), 600L);
 					if (level.getGameRules().get(GameRules.UNIVERSAL_ANGER)) {
 						piglin.getBrain().setMemoryWithExpiry(MemoryModuleType.UNIVERSAL_ANGER, true, 600L);
