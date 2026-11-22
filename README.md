@@ -16,7 +16,7 @@ not know the id. The title is `{"translate": "fletcher.table", "fallback": "Ст
 | 0 | feather | feather, paper, leather, phantom membrane |
 | 1 | shaft | stick, bamboo, blaze rod, bone |
 | 2 | head | flint, copper/iron/gold nugget, iron ingot, amethyst shard, diamond |
-| 3 | locked (the gap in the hopper layout) | — |
+| 3 | addon (optional) | gunpowder, string |
 | 4 | result: 4 arrows per set | — |
 
 The order is strict: a slot takes only its own role. A part of the wrong role does not go in by
@@ -26,9 +26,9 @@ the open menu, leftovers return to the inventory on close, and the menu closes w
 or the player walks more than four blocks away.
 
 Empty input slots show a rotating hint of **their own** role: feathers in slot 0, shafts in slot 1,
-heads in slot 2, switching every three seconds and disappearing once something is placed. The hint
-is lore-tagged («Сюда: оперение / древко / наконечник»). It lives in the display slot, not in the
-container: it cannot be taken, shifted out, cloned or thrown.
+heads in slot 2, addons in slot 3, switching every three seconds and disappearing once something is
+placed. The hint is lore-tagged («Сюда: оперение / древко / наконечник / добавка»). It lives in the
+display slot, not in the container: it cannot be taken, shifted out, cloned or thrown.
 
 The hint is hidden while the cursor holds an item. That is not cosmetic — vanilla inserts through
 `Slot#safeInsert` and drag distribution, both of which read `slot.getItem()`; serving the hint to a
@@ -38,9 +38,9 @@ item. Drag distribution into the table works like a chest because of the same ru
 ## The arrow
 
 The result is a plain `minecraft:arrow` with components: `custom_data.fletcher = {drag, damage,
-pierce}` plus the specials, `custom_name`, `lore` (a vanilla client shows the numbers too) and
-`enchantment_glint_override` when it pierces. A custom item id is impossible server-side: the client
-would draw a missing texture.
+pierce}` plus the specials and addons, `custom_name`, `lore` (a vanilla client shows the numbers too)
+and `enchantment_glint_override` when it pierces. A custom item id is impossible server-side: the
+client would draw a missing texture.
 
 Stats add up: `inertia = 0.99 + sum`, `damage = 2.0 + sum`, `piercing = sum` (0..3, inertia clamped
 to 0.975..0.997). Lore shows damage and range as percentages of a vanilla arrow — the absolute base
@@ -122,6 +122,30 @@ refuse it the way they refuse a player's break. Guarded blocks (bastion chests, 
 nearby piglins: the arrow reproduces the `GUARDED_BY_PIGLINS` hook around the hit block, because the
 shooter can be outside vanilla's 16-block anger radius. Their chase range stays vanilla.
 
+## Addons
+
+Slot 3 takes one optional addon and changes no stats; an empty slot is a normal fletcher arrow.
+
+| addon | item | effect |
+|---|---|---|
+| gunpowder | gunpowder | explodes on contact with a block or an entity, destroys the arrow |
+| string | string | on a block hit, pulls the shooter to the arrow; on an entity hit, nothing |
+
+**Gunpowder** replaces the ordinary hit: the arrow deals no separate arrow damage and applies no
+on-hit part specials, it just explodes and is spent. Explosion power is 0.8 — the ghast's
+`LargeFireball` is 1.0 — with no fire, and blocks always break (`ExplosionInteraction.BLOCK`, so
+even `mobGriefing=false` does not stop it, as the owner asked). Because the arrow dies on the first
+contact, its piercing is forced to 0 and the lore shows `Взрыв: 0.8` instead of damage/piercing.
+The explosion is credited to the owning player so kills count.
+
+**String** is a grappling hook: the arrow flies and hits exactly like a normal one, and an entity hit
+does nothing extra. On a block hit, the owner (not a spectator or passenger) is pulled toward the
+stuck arrow at 3 blocks per second for the distance divided by that speed, up to 64 blocks; the pull
+stops within two blocks, when the arrow is picked up, or at the end of the count. Velocity is sent to
+the client every tick, `fallDistance` is reset during the pull, and the arrow stays in the block and
+can be picked up. A string arrow with the iron-ingot head suppresses the "breaks the block" special —
+otherwise the anchor would be gone; other head specials still work.
+
 ## Mechanics
 
 The range figure in the lore comes from a flight run, not from a gravity-free formula (that one
@@ -149,7 +173,8 @@ rod + diamond); the self-test checks it so the lore never promises more than the
 Modelled on `graves` (`eu.pb4.graves.other.OutputSlot`): the result is not stored state, it is
 recomputed from the inputs. Slot 4 cannot be filled or taken by a vanilla path (`mayPlace`,
 `mayPickup`, `allowModification`, `remove` all `false`); issuing and consuming happens in a single
-`FletcherMenu#clicked` override, one item of each role. `quickMoveStack` is overridden (shift-click
+`FletcherMenu#clicked` override, one item of each role and, if present, one addon. `quickMoveStack`
+is overridden (shift-click
 does not call `onTake`, and vanilla transfer would write into the slot that serves the hint),
 `CLONE` on a hint is blocked (`Slot#safeClone` never asks `mayPickup` and would clone it to 64),
 and negative slot ids are rejected — for `SWAP`/`THROW`/`CLONE` vanilla would otherwise touch
@@ -182,6 +207,15 @@ spawned item entity is not visible to entity queries; the call is vanilla `destr
 A diamond arrow reports piercing 3, the lore of a three-special arrow has six lines, forged
 `ignite/gravity/glow/knockback` clamp to 30 / 0.005 / 1200 / 2, and bamboo/paper/stick report no
 special at all.
+
+Slot 3 is covered as well: gunpowder and string are accepted, other items are refused, an empty slot
+still makes a normal arrow, one addon is consumed per set, and `F`/drag/shift-click/`CLONE`/`Q` follow
+the same no-dupe rules. A gunpowder arrow removes dirt even with `mobGriefing=false` and is destroyed;
+an entity hit also detonates (checked by the block under the pig, since entity sections are hidden
+before the first tick — the damage itself is vanilla explosion code); a string arrow pulls the owner
+toward the hit block (the test checks the velocity direction), does nothing on an entity hit, refuses
+an ownerless arrow and a shot beyond 64 blocks, and an iron-ingot head with string leaves the anchor
+block intact.
 
 ## Install
 

@@ -6,11 +6,11 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 
 /**
- * Контейнер стола лучника: 3 слота материалов, заблокированный слот, слот результата.
+ * Контейнер стола лучника: три слота материалов, слот добавки, слот результата.
  * <p>
- * Порядок жёсткий: 0 — оперение, 1 — древко, 2 — наконечник. Слот принимает только свою роль
- * ({@link #canPlaceItem}), поэтому чужую часть туда не положить ни кликом, ни shift-click'ом,
- * ни драгом.
+ * Порядок жёсткий: 0 — оперение, 1 — древко, 2 — наконечник, 3 — добавка (порох/нитка).
+ * Слот принимает только свою роль/добавку ({@link #canPlaceItem}), поэтому чужую часть туда
+ * не положить ни кликом, ни shift-click'ом, ни драгом.
  * <p>
  * Пустые слоты материалов показывают подсказку: случайный предмет своей роли. Подсказка живёт
  * только в слоте отображения и никогда не попадает в контейнер, поэтому её нельзя ни забрать,
@@ -20,14 +20,16 @@ public class FletcherInventory implements Container {
 	public static final int SLOT_FEATHER = 0;
 	public static final int SLOT_SHAFT = 1;
 	public static final int SLOT_HEAD = 2;
-	public static final int SLOT_MATERIALS = 3;
-	public static final int SLOT_LOCKED = 3;
+	public static final int SLOT_ADDON = 3;
+	public static final int SLOT_INPUTS = 4;
 	public static final int SLOT_OUTPUT = 4;
 	public static final int SIZE = 5;
 
 	private final NonNullList<ItemStack> items = NonNullList.withSize(SIZE, ItemStack.EMPTY);
-	/** Подсказки для слотов 0..2; на реальное содержимое не влияют. */
-	private final ItemStack[] previews = {ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY};
+	/** Подсказки для слотов 0..3; на реальное содержимое не влияют. */
+	private final ItemStack[] previews = {
+		ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY
+	};
 
 	@Override
 	public int getContainerSize() {
@@ -36,7 +38,7 @@ public class FletcherInventory implements Container {
 
 	@Override
 	public boolean isEmpty() {
-		for (int i = 0; i < SLOT_MATERIALS; i++) {
+		for (int i = 0; i < SLOT_INPUTS; i++) {
 			if (!items.get(i).isEmpty()) {
 				return false;
 			}
@@ -50,13 +52,13 @@ public class FletcherInventory implements Container {
 		return items.get(slot);
 	}
 
-	/** Подсказка слота материалов (пустой стек, если подсказки нет). */
+	/** Подсказка слота материалов/добавки (пустой стек, если подсказки нет). */
 	public ItemStack getPreview(int slot) {
-		return slot >= 0 && slot < SLOT_MATERIALS ? previews[slot] : ItemStack.EMPTY;
+		return slot >= 0 && slot < SLOT_INPUTS ? previews[slot] : ItemStack.EMPTY;
 	}
 
 	public void setPreview(int slot, ItemStack stack) {
-		if (slot >= 0 && slot < SLOT_MATERIALS) {
+		if (slot >= 0 && slot < SLOT_INPUTS) {
 			previews[slot] = stack.isEmpty() ? ItemStack.EMPTY : stack.copy();
 		}
 	}
@@ -67,7 +69,7 @@ public class FletcherInventory implements Container {
 
 	@Override
 	public ItemStack removeItem(int slot, int amount) {
-		if (slot == SLOT_LOCKED || slot == SLOT_OUTPUT) {
+		if (slot == SLOT_OUTPUT) {
 			return ItemStack.EMPTY;
 		}
 		ItemStack stack = items.get(slot);
@@ -80,7 +82,7 @@ public class FletcherInventory implements Container {
 
 	@Override
 	public ItemStack removeItemNoUpdate(int slot) {
-		if (slot == SLOT_LOCKED || slot == SLOT_OUTPUT) {
+		if (slot == SLOT_OUTPUT) {
 			return ItemStack.EMPTY;
 		}
 		ItemStack stack = items.get(slot);
@@ -91,7 +93,7 @@ public class FletcherInventory implements Container {
 
 	@Override
 	public void setItem(int slot, ItemStack stack) {
-		if (slot == SLOT_LOCKED || slot == SLOT_OUTPUT) {
+		if (slot == SLOT_OUTPUT) {
 			return;
 		}
 		items.set(slot, stack);
@@ -114,9 +116,12 @@ public class FletcherInventory implements Container {
 		return Math.min(stack.getItem().getDefaultMaxStackSize(), getMaxStackSize());
 	}
 
-	/** Слот принимает только свою роль: 0 — оперение, 1 — древко, 2 — наконечник. */
+	/** Слот принимает только свою роль: 0 — оперение, 1 — древко, 2 — наконечник, 3 — добавка. */
 	@Override
 	public boolean canPlaceItem(int slot, ItemStack stack) {
+		if (slot == SLOT_ADDON) {
+			return FletcherArrows.isAddon(stack);
+		}
 		return FletcherArrows.roleForSlot(slot) == FletcherArrows.roleOf(stack);
 	}
 
@@ -141,10 +146,10 @@ public class FletcherInventory implements Container {
 		}
 	}
 
-	/** Пересчитать витрину из трёх входов по порядку. */
+	/** Пересчитать витрину из четырёх входов: три материала и необязательная добавка. */
 	public void refreshOutput() {
 		ItemStack computed = FletcherArrows.build(
-			items.get(SLOT_FEATHER), items.get(SLOT_SHAFT), items.get(SLOT_HEAD)
+			items.get(SLOT_FEATHER), items.get(SLOT_SHAFT), items.get(SLOT_HEAD), items.get(SLOT_ADDON)
 		);
 		if (!ItemStack.matches(items.get(SLOT_OUTPUT), computed)) {
 			items.set(SLOT_OUTPUT, computed);
@@ -152,23 +157,30 @@ public class FletcherInventory implements Container {
 	}
 
 	/**
-	 * Забрать по одной штуке из каждого слота после успешной выдачи стрелы.
+	 * Забрать по одной штуке из каждого обязательного слота и добавки, если она есть.
 	 * Вызывается только после того, как результат реально ушёл игроку.
 	 */
 	public void consumeInputs() {
 		if (items.get(SLOT_OUTPUT).isEmpty()) {
 			return;
 		}
-		for (int i = 0; i < SLOT_MATERIALS; i++) {
+		for (int i = 0; i < SLOT_ADDON; i++) {
 			if (items.get(i).isEmpty()) {
 				return;
 			}
 		}
-		for (int i = 0; i < SLOT_MATERIALS; i++) {
+		for (int i = 0; i < SLOT_ADDON; i++) {
 			ItemStack stack = items.get(i);
 			stack.shrink(1);
 			if (stack.isEmpty()) {
 				items.set(i, ItemStack.EMPTY);
+			}
+		}
+		ItemStack addon = items.get(SLOT_ADDON);
+		if (!addon.isEmpty()) {
+			addon.shrink(1);
+			if (addon.isEmpty()) {
+				items.set(SLOT_ADDON, ItemStack.EMPTY);
 			}
 		}
 		refreshOutput();

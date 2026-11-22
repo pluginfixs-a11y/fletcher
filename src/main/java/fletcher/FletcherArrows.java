@@ -52,6 +52,10 @@ public final class FletcherArrows {
 	public static final String KEY_FIRE = "fire";
 	/** 1 — ломает блок прочностью до 10 (твёрже и неломаемое — нет), расходуясь. */
 	public static final String KEY_BREAK = "break";
+	/** 1 — взрывается при столкновении и уничтожается. */
+	public static final String KEY_EXPLODE = "explode";
+	/** 1 — при попадании в блок притягивает стрелка. */
+	public static final String KEY_HARPOON = "harpoon";
 	/** Сила отбрасывания в единицах зачарования «Удар» (2 уровня = 2.0). */
 	public static final String KEY_KNOCKBACK = "knockback";
 
@@ -60,6 +64,12 @@ public final class FletcherArrows {
 	/** Ванильный базовый урон стрелы: {@code AbstractArrow.ARROW_BASE_DAMAGE}. */
 	public static final float BASE_DAMAGE = 2.0F;
 	public static final int ARROWS_PER_CRAFT = 4;
+	/** Гаст взрывает на 1.0; «чуть меньше» — 0.8. */
+	public static final float EXPLOSION_POWER = 0.8F;
+	/** Гарпун тянет 3 блока в секунду = 0.15 блока за тик. */
+	public static final double HARPOON_SPEED = 0.15D;
+	/** Дальше этого гарпун не тянет, стрела просто втыкается. */
+	public static final double HARPOON_RANGE = 64.0D;
 
 	private static final float MIN_DRAG = 0.975F;
 	private static final float MAX_DRAG = 0.997F;
@@ -85,9 +95,12 @@ public final class FletcherArrows {
 	private static final Map<Item, Part> HEADS = new HashMap<>();
 	/** Особые свойства: только у стоящих материалов, у «дешёвых» (бумага, бамбук) их нет. */
 	private static final Map<Item, Special> SPECIALS = new HashMap<>();
+	/** Добавки слота 3: порох и нитка. */
+	private static final Map<Item, Addon> ADDONS = new HashMap<>();
 	private static final List<Item> FEATHER_ITEMS;
 	private static final List<Item> SHAFT_ITEMS;
 	private static final List<Item> HEAD_ITEMS;
+	private static final List<Item> ADDON_ITEMS;
 	/** Всё, что вообще принимает стол: для подсказок в пустых слотах. */
 	private static final List<Item> POOL;
 
@@ -126,9 +139,15 @@ public final class FletcherArrows {
 		// Цена — сама стрела, после попадания её не подобрать
 		SPECIALS.put(Items.IRON_INGOT, new Special(0.0F, 0.0F, 0, false, 0.0F, true, "Ломает блок, расходуясь"));
 
+		ADDONS.put(Items.GUNPOWDER, new Addon(Items.GUNPOWDER, "gunpowder", "порох",
+			"Взрывается при попадании", true, false));
+		ADDONS.put(Items.STRING, new Addon(Items.STRING, "string", "нитка",
+			"Притягивает к блоку", false, true));
+
 		FEATHER_ITEMS = List.copyOf(FEATHERS.keySet());
 		SHAFT_ITEMS = List.copyOf(SHAFTS.keySet());
 		HEAD_ITEMS = List.copyOf(HEADS.keySet());
+		ADDON_ITEMS = List.copyOf(ADDONS.keySet());
 
 		List<Item> all = new ArrayList<>();
 		all.addAll(FEATHER_ITEMS);
@@ -141,6 +160,15 @@ public final class FletcherArrows {
 	}
 
 	public record Part(float damage, float drag, int pierce, String label) {
+	}
+
+	/** Добавка слота 3: порох или нитка. Статы не меняет, включает свой спецэффект. */
+	public record Addon(Item item, String key, String label, String effect, boolean explode, boolean harpoon) {
+		public static final Addon NONE = new Addon(Items.AIR, "none", "", "", false, false);
+
+		public boolean isEmpty() {
+			return this.item == Items.AIR;
+		}
 	}
 
 	/**
@@ -247,6 +275,24 @@ public final class FletcherArrows {
 		};
 	}
 
+	/** Добавка предмета; у обычного предмета — {@link Addon#NONE}. */
+	public static Addon addonOf(ItemStack stack) {
+		if (stack.isEmpty()) {
+			return Addon.NONE;
+		}
+		return ADDONS.getOrDefault(stack.getItem(), Addon.NONE);
+	}
+
+	/** Принимает ли слот 3 этот предмет. */
+	public static boolean isAddon(ItemStack stack) {
+		return !addonOf(stack).isEmpty();
+	}
+
+	/** Предметы-добавки — для подсказки в пустом слоте 3. */
+	public static List<Item> addonPool() {
+		return ADDON_ITEMS;
+	}
+
 	/** Особое свойство предмета; у обычной части — {@link Special#NONE}. */
 	public static Special specialOf(ItemStack stack) {
 		if (stack.isEmpty()) {
@@ -261,10 +307,15 @@ public final class FletcherArrows {
 	}
 
 	/**
-	 * Собирает стрелу из трёх слотов по порядку: оперение, древко, наконечник.
-	 * Любой пустой или чужой слот — {@link ItemStack#EMPTY}.
+	 * Собирает стрелу из трёх обязательных слотов (оперение, древко, наконечник) и необязательной
+	 * добавки (порох/нитка). Любой пустой или чужой обязательный слот — {@link ItemStack#EMPTY}.
 	 */
 	public static ItemStack build(ItemStack featherStack, ItemStack shaftStack, ItemStack headStack) {
+		return build(featherStack, shaftStack, headStack, ItemStack.EMPTY);
+	}
+
+	public static ItemStack build(ItemStack featherStack, ItemStack shaftStack, ItemStack headStack,
+		ItemStack addonStack) {
 		Part feather = FEATHERS.get(featherStack.getItem());
 		Part shaft = SHAFTS.get(shaftStack.getItem());
 		Part head = HEADS.get(headStack.getItem());
@@ -272,11 +323,25 @@ public final class FletcherArrows {
 			return ItemStack.EMPTY;
 		}
 
+		Addon addon = addonOf(addonStack);
 		float drag = Mth.clamp(BASE_DRAG + feather.drag() + shaft.drag() + head.drag(), MIN_DRAG, MAX_DRAG);
 		float damage = Math.min(MAX_READ_DAMAGE,
 			Math.max(MIN_DAMAGE, BASE_DAMAGE + feather.damage() + shaft.damage() + head.damage()));
 		int pierce = Mth.clamp(feather.pierce() + shaft.pierce() + head.pierce(), 0, MAX_PIERCE);
-		Special special = combine(specialOf(featherStack), specialOf(shaftStack), specialOf(headStack));
+		Special featherSpecial = specialOf(featherStack);
+		Special shaftSpecial = specialOf(shaftStack);
+		Special headSpecial = specialOf(headStack);
+		// гарпун держится за блок: железный наконечник не должен его сломать
+		if (addon.harpoon() && headSpecial.breaksBlock()) {
+			headSpecial = new Special(headSpecial.ignite(), headSpecial.gravity(), headSpecial.glow(),
+				headSpecial.fire(), headSpecial.knockback(), false, "");
+		}
+		Special special = combine(featherSpecial, shaftSpecial, headSpecial);
+		// порох заменяет обычное попадание: пробивание и on-hit свойства не сработают
+		if (addon.explode()) {
+			pierce = 0;
+			special = new Special(0.0F, special.gravity(), 0, false, 0.0F, false, "");
+		}
 
 		ItemStack out = new ItemStack(Items.ARROW, ARROWS_PER_CRAFT);
 
@@ -303,21 +368,42 @@ public final class FletcherArrows {
 		if (special.knockback() > 0.0F) {
 			tag.putFloat(KEY_KNOCKBACK, special.knockback());
 		}
+		if (addon.explode()) {
+			tag.putBoolean(KEY_EXPLODE, true);
+		}
+		if (addon.harpoon()) {
+			tag.putBoolean(KEY_HARPOON, true);
+		}
 		CustomData.update(DataComponents.CUSTOM_DATA, out, root -> root.put(NBT_ROOT, tag));
 
-		out.set(DataComponents.CUSTOM_NAME, Component.literal("Стрела · " + head.label() + " / " + feather.label())
-			.withStyle(head.pierce() > 0 || special.glow() > 0 ? ChatFormatting.AQUA : ChatFormatting.WHITE));
+		String suffix = addon.isEmpty() ? "" : " · " + addon.label();
+		out.set(DataComponents.CUSTOM_NAME,
+			Component.literal("Стрела · " + head.label() + " / " + feather.label() + suffix)
+				.withStyle(head.pierce() > 0 || special.glow() > 0 ? ChatFormatting.AQUA : ChatFormatting.WHITE));
 		List<Component> lore = new ArrayList<>();
-		lore.add(Component.literal("Урон: " + damagePercent(damage)).withStyle(ChatFormatting.GRAY));
+		// взрыв заменяет обычный урон; абсолютный урон наконечника тут ничего не значит
+		lore.add(Component.literal(addon.explode()
+			? "Взрыв: " + EXPLOSION_POWER
+			: "Урон: " + damagePercent(damage)).withStyle(ChatFormatting.GRAY));
 		// таблица процентов снята с ванильной гравитации: при своей (мембрана) она врёт в меньшую сторону
 		lore.add(Component.literal(special.gravity() > 0.0F
 			? "Дальность: " + rangePercent(drag) + " по инерции и почти не падает"
 			: "Дальность: " + rangePercent(drag)).withStyle(ChatFormatting.GRAY));
-		lore.add(Component.literal("Пробивание: " + pierce).withStyle(ChatFormatting.GRAY));
-		for (Special used : new Special[]{specialOf(featherStack), specialOf(shaftStack), specialOf(headStack)}) {
-			if (!used.isEmpty()) {
-				lore.add(Component.literal(used.label()).withStyle(ChatFormatting.GOLD));
+		if (!addon.explode()) {
+			lore.add(Component.literal("Пробивание: " + pierce).withStyle(ChatFormatting.GRAY));
+		}
+		for (Special used : new Special[]{featherSpecial, shaftSpecial, headSpecial}) {
+			if (used.isEmpty()) {
+				continue;
 			}
+			// у взрывной стрелы остаются только свойства полёта (гравитация мембраны)
+			if (addon.explode() && used.gravity() <= 0.0F) {
+				continue;
+			}
+			lore.add(Component.literal(used.label()).withStyle(ChatFormatting.GOLD));
+		}
+		if (!addon.isEmpty()) {
+			lore.add(Component.literal(addon.effect()).withStyle(ChatFormatting.GOLD));
 		}
 		out.set(DataComponents.LORE, new ItemLore(lore));
 		if (pierce > 0) {
@@ -429,6 +515,18 @@ public final class FletcherArrows {
 	public static boolean breaksBlocks(ItemStack arrow) {
 		CompoundTag tag = dataOf(arrow);
 		return tag != null && tag.getBooleanOr(KEY_BREAK, false);
+	}
+
+	/** Взрывается ли стрела при столкновении (и уничтожается). */
+	public static boolean explodes(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		return tag != null && tag.getBooleanOr(KEY_EXPLODE, false);
+	}
+
+	/** Притягивает ли стрела стрелка к блоку, в который воткнулась. */
+	public static boolean harpoons(ItemStack arrow) {
+		CompoundTag tag = dataOf(arrow);
+		return tag != null && tag.getBooleanOr(KEY_HARPOON, false);
 	}
 
 	/** Сила отбрасывания цели в единицах «Удара»; 0 — только ванильное. */

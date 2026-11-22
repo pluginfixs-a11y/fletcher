@@ -10,6 +10,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -22,6 +23,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gamerules.GameRules;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
@@ -62,6 +64,12 @@ public abstract class AbstractArrowMixin {
 	private boolean fletcher$fire;
 	@Unique
 	private boolean fletcher$breaks;
+	@Unique
+	private boolean fletcher$explode;
+	@Unique
+	private boolean fletcher$harpoon;
+	@Unique
+	private int fletcher$harpoonTicks;
 	@Unique
 	private float fletcher$knockback;
 	@Unique
@@ -107,6 +115,70 @@ public abstract class AbstractArrowMixin {
 		}
 	}
 
+	/**
+	 * Порох: взрыв вместо ванильного попадания. Стрела уничтожается, обычный урон и свойства
+	 * частей не применяются — взрыв и есть весь эффект.
+	 */
+	@Inject(method = "onHitEntity", at = @At("HEAD"), cancellable = true)
+	private void fletcher$explodeOnEntity(EntityHitResult hit, CallbackInfo ci) {
+		if (this.fletcher$explode) {
+			fletcher$detonate(hit.getLocation());
+			ci.cancel();
+		}
+	}
+
+	/**
+	 * Гарпун: пока стрела торчит в блоке, тянем владельца к ней. 3 блока в секунду — это
+	 * {@link FletcherArrows#HARPOON_SPEED} за тик; 0.08 по Y компенсирует гравитацию, иначе игрок
+	 * проседает. Останавливаемся в двух блоках, по истечении срока или если стрелу подобрали.
+	 */
+	@Inject(method = "tick", at = @At("HEAD"))
+	private void fletcher$pull(CallbackInfo ci) {
+		if (this.fletcher$harpoonTicks <= 0) {
+			return;
+		}
+		AbstractArrow self = (AbstractArrow) (Object) this;
+		if (!(self.level() instanceof ServerLevel)
+			|| !(self.getOwner() instanceof ServerPlayer owner)
+			|| owner.isRemoved() || owner.isSpectator() || owner.isPassenger()
+			|| self.isRemoved()) {
+			this.fletcher$harpoonTicks = 0;
+			return;
+		}
+		Vec3 delta = self.position().subtract(owner.position());
+		double distance = delta.length();
+		if (distance <= 2.0 || distance > FletcherArrows.HARPOON_RANGE) {
+			this.fletcher$harpoonTicks = 0;
+			return;
+		}
+		Vec3 pull = delta.scale(FletcherArrows.HARPOON_SPEED / distance);
+		owner.setDeltaMovement(pull.x, pull.y + 0.08, pull.z);
+		owner.hurtMarked = true;
+		owner.resetFallDistance();
+		this.fletcher$harpoonTicks--;
+	}
+
+	/** Взрыв на 0.8 (гаст — 1.0), без огня, блоки ломает всегда: так просил владелец. */
+	@Unique
+	private void fletcher$detonate(Vec3 at) {
+		AbstractArrow self = (AbstractArrow) (Object) this;
+		if (!(self.level() instanceof ServerLevel level)) {
+			return;
+		}
+		Entity source = self.getOwner() instanceof Entity owner ? owner : self;
+		level.explode(source, at.x, at.y, at.z, FletcherArrows.EXPLOSION_POWER, false,
+			Level.ExplosionInteraction.BLOCK);
+		self.discard();
+	}
+
+	@Inject(method = "onHitBlock", at = @At("HEAD"), cancellable = true)
+	private void fletcher$explodeOnBlock(BlockHitResult hit, CallbackInfo ci) {
+		if (this.fletcher$explode) {
+			fletcher$detonate(hit.getLocation());
+			ci.cancel();
+		}
+	}
+
 	@Inject(method = "onHitEntity", at = @At("HEAD"))
 	private void fletcher$rememberDirection(EntityHitResult hit, CallbackInfo ci) {
 		Vec3 motion = ((AbstractArrow) (Object) this).getDeltaMovement().multiply(1.0, 0.0, 1.0);
@@ -142,6 +214,24 @@ public abstract class AbstractArrowMixin {
 				target.push(this.fletcher$dirX * force, 0.1, this.fletcher$dirZ * force);
 			}
 		}
+	}
+
+	/** Гарпун: после того как стрела воткнулась, включаем притягивание. */
+	@Inject(method = "onHitBlock", at = @At("RETURN"))
+	private void fletcher$startHarpoon(BlockHitResult hit, CallbackInfo ci) {
+		if (!this.fletcher$harpoon || this.fletcher$explode) {
+			return;
+		}
+		AbstractArrow self = (AbstractArrow) (Object) this;
+		if (!(self.getOwner() instanceof ServerPlayer owner)
+			|| owner.isSpectator() || owner.isPassenger()) {
+			return;
+		}
+		double distance = self.position().distanceTo(owner.position());
+		if (distance <= 2.0 || distance > FletcherArrows.HARPOON_RANGE) {
+			return;
+		}
+		this.fletcher$harpoonTicks = Math.max(1, (int) Math.ceil(distance / FletcherArrows.HARPOON_SPEED));
 	}
 
 	/** Кремень: стрела поджигает блок, в который воткнулась — как огниво, без своего предмета. */
@@ -245,6 +335,9 @@ public abstract class AbstractArrowMixin {
 			this.fletcher$glow = 0;
 			this.fletcher$fire = false;
 			this.fletcher$breaks = false;
+			this.fletcher$explode = false;
+			this.fletcher$harpoon = false;
+			this.fletcher$harpoonTicks = 0;
 			this.fletcher$knockback = 0.0F;
 			// стек переписали на обычную стрелу (креатив, /data, чужой мод): возвращаем ванильную базу,
 			// иначе наш урон остался бы навсегда — но только если мы его сами и ставили, иначе
@@ -262,6 +355,8 @@ public abstract class AbstractArrowMixin {
 		this.fletcher$glow = FletcherArrows.glowOf(arrow);
 		this.fletcher$fire = FletcherArrows.setsFire(arrow);
 		this.fletcher$breaks = FletcherArrows.breaksBlocks(arrow);
+		this.fletcher$explode = FletcherArrows.explodes(arrow);
+		this.fletcher$harpoon = FletcherArrows.harpoons(arrow);
 		this.fletcher$knockback = FletcherArrows.knockbackOf(arrow);
 		self.setBaseDamage(FletcherArrows.baseDamageOf(arrow));
 		// огненное древко: стрела должна гореть сама, иначе ваниль не подожжёт цель.

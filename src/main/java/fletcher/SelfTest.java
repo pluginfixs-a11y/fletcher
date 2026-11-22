@@ -26,6 +26,7 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -112,15 +113,49 @@ public final class SelfTest {
 		junk.setItem(2, new ItemStack(Items.FLINT));
 		boolean junkIgnored = junk.getItem(FletcherInventory.SLOT_OUTPUT).isEmpty();
 
-		// слот не принимает чужую роль
+		// добавка опциональна: порох делает результат взрывным, нитка — гарпуном
+		FletcherInventory withAddon = new FletcherInventory();
+		withAddon.setItem(0, new ItemStack(Items.FEATHER, 3));
+		withAddon.setItem(1, new ItemStack(Items.STICK, 3));
+		withAddon.setItem(2, new ItemStack(Items.IRON_NUGGET, 3));
+		withAddon.setItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.GUNPOWDER, 3));
+		ItemStack explosive = withAddon.getItem(FletcherInventory.SLOT_OUTPUT);
+		boolean addonBuilt = FletcherArrows.explodes(explosive)
+			&& !FletcherArrows.harpoons(explosive)
+			&& FletcherArrows.pierceOf(explosive) == 0;
+		withAddon.consumeInputs();
+		boolean addonConsumed = withAddon.getItem(0).getCount() == 2
+			&& withAddon.getItem(1).getCount() == 2
+			&& withAddon.getItem(2).getCount() == 2
+			&& withAddon.getItem(FletcherInventory.SLOT_ADDON).getCount() == 2
+			&& FletcherArrows.explodes(withAddon.getItem(FletcherInventory.SLOT_OUTPUT));
+
+		FletcherInventory harpoonInv = new FletcherInventory();
+		harpoonInv.setItem(0, new ItemStack(Items.FEATHER));
+		harpoonInv.setItem(1, new ItemStack(Items.STICK));
+		harpoonInv.setItem(2, new ItemStack(Items.IRON_INGOT));
+		harpoonInv.setItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.STRING));
+		ItemStack harpooned = harpoonInv.getItem(FletcherInventory.SLOT_OUTPUT);
+		boolean harpoonBuilt = FletcherArrows.harpoons(harpooned)
+			&& !FletcherArrows.explodes(harpooned)
+			&& !FletcherArrows.breaksBlocks(harpooned);
+
+		// слот не принимает чужую роль, слот 3 — только добавки
 		boolean filter = inventory.canPlaceItem(0, new ItemStack(Items.FEATHER))
 			&& !inventory.canPlaceItem(0, new ItemStack(Items.STICK))
 			&& !inventory.canPlaceItem(1, new ItemStack(Items.IRON_NUGGET))
-			&& !inventory.canPlaceItem(2, new ItemStack(Items.FEATHER));
+			&& !inventory.canPlaceItem(2, new ItemStack(Items.FEATHER))
+			&& inventory.canPlaceItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.GUNPOWDER))
+			&& inventory.canPlaceItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.STRING))
+			&& !inventory.canPlaceItem(FletcherInventory.SLOT_ADDON, new ItemStack(Items.FEATHER))
+			&& !inventory.canPlaceItem(1, new ItemStack(Items.GUNPOWDER));
 
-		LOGGER.info("Fletcher: контейнер — результат {}, расход {}, порядок {}, мусор {}, роли {}",
-			ok(built), ok(consumed), ok(wrongOrder), ok(junkIgnored), ok(filter));
-		return built && consumed && wrongOrder && junkIgnored && filter;
+		LOGGER.info("Fletcher: контейнер — результат {}, расход {}, порядок {}, мусор {}, роли {}, "
+				+ "добавка {}, расход добавки {}, гарпун {}",
+			ok(built), ok(consumed), ok(wrongOrder), ok(junkIgnored), ok(filter),
+			ok(addonBuilt), ok(addonConsumed), ok(harpoonBuilt));
+		return built && consumed && wrongOrder && junkIgnored && filter
+			&& addonBuilt && addonConsumed && harpoonBuilt;
 	}
 
 	private static boolean menuTest(MinecraftServer server) {
@@ -130,21 +165,30 @@ public final class SelfTest {
 
 		boolean slots = menu.slots.size() == 41;
 
-		// подсказки по ролям: слот 0 — оперение, 1 — древко, 2 — наконечник
+		// подсказки по ролям: слот 0 — оперение, 1 — древко, 2 — наконечник, 3 — добавка
 		boolean preview = !menu.slots.get(0).getItem().isEmpty()
 			&& FletcherArrows.roleOf(menu.slots.get(0).getItem()) == FletcherArrows.Role.FEATHER
 			&& FletcherArrows.roleOf(menu.slots.get(1).getItem()) == FletcherArrows.Role.SHAFT
 			&& FletcherArrows.roleOf(menu.slots.get(2).getItem()) == FletcherArrows.Role.HEAD
-			&& inventory.getItem(0).isEmpty();
+			&& FletcherArrows.isAddon(menu.slots.get(3).getItem())
+			&& inventory.getItem(0).isEmpty() && inventory.getItem(3).isEmpty();
 
 		// подсказка прячется, когда в руке предмет
 		menu.setCarried(new ItemStack(Items.FEATHER, 2));
-		boolean previewHidden = menu.slots.get(0).getItem().isEmpty() && inventory.getItem(0).isEmpty();
+		boolean previewHidden = menu.slots.get(0).getItem().isEmpty()
+			&& menu.slots.get(3).getItem().isEmpty() && inventory.getItem(0).isEmpty();
 
-		// чужую роль слот не принимает: перо не ложится в слот древка
+		// чужую роль слот не принимает: перо не ложится в слот древка, порох — в слот древка,
+		// а перо — в слот добавки
 		menu.setCarried(new ItemStack(Items.FEATHER, 1));
 		menu.clicked(1, 0, ContainerInput.PICKUP, player);
 		boolean wrongRole = inventory.getItem(1).isEmpty() && menu.getCarried().getCount() == 1;
+		menu.setCarried(new ItemStack(Items.GUNPOWDER, 1));
+		menu.clicked(1, 0, ContainerInput.PICKUP, player);
+		wrongRole &= inventory.getItem(1).isEmpty() && menu.getCarried().getCount() == 1;
+		menu.setCarried(new ItemStack(Items.FEATHER, 1));
+		menu.clicked(3, 0, ContainerInput.PICKUP, player);
+		wrongRole &= inventory.getItem(3).isEmpty() && menu.getCarried().getCount() == 1;
 		menu.setCarried(ItemStack.EMPTY);
 
 		// левая кладка: ваниль сама зовёт safeInsert и пишет в контейнер, подсказку не трогает
@@ -167,6 +211,13 @@ public final class SelfTest {
 		boolean autoPlaced = player.getInventory().getItem(10).isEmpty()
 			&& inventory.getItem(2).getCount() == 2;
 
+		// shift-click добавки: порох сам находит слот 3, результат становится взрывным
+		player.getInventory().setItem(11, new ItemStack(Items.GUNPOWDER, 2));
+		menu.quickMoveStack(player, 7);
+		boolean addonAutoPlaced = player.getInventory().getItem(11).isEmpty()
+			&& inventory.getItem(FletcherInventory.SLOT_ADDON).getCount() == 2;
+		boolean explosiveOutput = FletcherArrows.explodes(inventory.getItem(FletcherInventory.SLOT_OUTPUT));
+
 		// комплект собран, но в руке палка — выдача не должна пройти
 		menu.setCarried(new ItemStack(Items.STICK, 2));
 		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.PICKUP, player);
@@ -181,7 +232,8 @@ public final class SelfTest {
 			&& carried.getCount() == FletcherArrows.ARROWS_PER_CRAFT
 			&& inventory.getItem(0).getCount() == 1
 			&& inventory.getItem(1).getCount() == 1
-			&& inventory.getItem(2).getCount() == 1;
+			&& inventory.getItem(2).getCount() == 1
+			&& inventory.getItem(FletcherInventory.SLOT_ADDON).getCount() == 1;
 
 		// второй клик с занятой рукой: ни выдачи, ни расхода
 		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.PICKUP, player);
@@ -213,9 +265,8 @@ public final class SelfTest {
 			}
 		}
 
-		// в слот результата положить нельзя, из заблокированного взять нельзя
-		boolean locked = !menu.slots.get(FletcherInventory.SLOT_OUTPUT).mayPlace(new ItemStack(Items.ARROW))
-			&& !menu.slots.get(FletcherInventory.SLOT_LOCKED).mayPickup(player);
+		// в слот результата положить нельзя
+		boolean outputLocked = !menu.slots.get(FletcherInventory.SLOT_OUTPUT).mayPlace(new ItemStack(Items.ARROW));
 
 		// shift-click забирает остаток и гасит результат; освободившиеся слоты снова с подсказкой
 		menu.setCarried(ItemStack.EMPTY);
@@ -223,19 +274,24 @@ public final class SelfTest {
 		boolean drained = inventory.getItem(0).isEmpty()
 			&& inventory.getItem(1).isEmpty()
 			&& inventory.getItem(2).isEmpty()
+			&& inventory.getItem(FletcherInventory.SLOT_ADDON).isEmpty()
 			&& inventory.getItem(FletcherInventory.SLOT_OUTPUT).isEmpty()
-			&& !menu.slots.get(0).getItem().isEmpty();
+			&& !menu.slots.get(0).getItem().isEmpty()
+			&& FletcherArrows.isAddon(menu.slots.get(3).getItem());
+		// подсказку добавки нельзя забрать, как и остальные подсказки
+		boolean addonPreviewLocked = !menu.slots.get(3).mayPickup(player);
 		menu.clicked(FletcherInventory.SLOT_OUTPUT, 0, ContainerInput.PICKUP, player);
 		boolean noGhostOutput = menu.getCarried().isEmpty();
 
 		boolean ok = slots && preview && previewHidden && wrongRole && placed && placedOne && merged && autoPlaced
-			&& busyHand && took && blocked && pierceKept && locked && drained && noGhostOutput;
+			&& addonAutoPlaced && explosiveOutput && busyHand && took && blocked && pierceKept
+			&& outputLocked && addonPreviewLocked && drained && noGhostOutput;
 		LOGGER.info("Fletcher: меню — слоты {}, подсказка {}, спрятана {}, чужая роль {}, кладка {}, правая {}, долив {}, "
-				+ "автораскладка {}, занятая рука {}, выдача {}, блок {}, пробивание-не-слабеет {}, "
-				+ "блокировка {}, расход {}, без пустышки {}",
+				+ "автораскладка {}, добавка {}, взрывной результат {}, занятая рука {}, выдача {}, блок {}, "
+				+ "пробивание-не-слабеет {}, блокировка {}, подсказка добавки {}, расход {}, без пустышки {}",
 			ok(slots), ok(preview), ok(previewHidden), ok(wrongRole), ok(placed), ok(placedOne), ok(merged),
-			ok(autoPlaced), ok(busyHand), ok(took), ok(blocked), ok(pierceKept),
-			ok(locked), ok(drained), ok(noGhostOutput));
+			ok(autoPlaced), ok(addonAutoPlaced), ok(explosiveOutput), ok(busyHand), ok(took), ok(blocked),
+			ok(pierceKept), ok(outputLocked), ok(addonPreviewLocked), ok(drained), ok(noGhostOutput));
 		return ok;
 	}
 
@@ -252,6 +308,17 @@ public final class SelfTest {
 		player.getInventory().setItem(0, new ItemStack(Items.BONE, 3));
 		swapMenu.clicked(2, 0, ContainerInput.SWAP, player);
 		boolean swapRejected = swapInv.getItem(2).isEmpty() && player.getInventory().getItem(0).getCount() == 3;
+
+		// F в слот добавки: порох ложится, перо — нет
+		player.getInventory().setItem(0, new ItemStack(Items.GUNPOWDER, 5));
+		swapMenu.clicked(3, 0, ContainerInput.SWAP, player);
+		boolean addonSwapped = swapInv.getItem(3).getCount() == 5
+			&& player.getInventory().getItem(0).isEmpty();
+		player.getInventory().setItem(0, new ItemStack(Items.FEATHER, 3));
+		swapMenu.clicked(3, 0, ContainerInput.SWAP, player);
+		boolean addonSwapRejected = swapInv.getItem(3).getCount() == 5
+			&& player.getInventory().getItem(0).getCount() == 3;
+		player.getInventory().setItem(0, ItemStack.EMPTY);
 
 		// драг по двум слотам: перья принимает только слот 0, чужой слот их не берёт
 		FletcherInventory dragInv = new FletcherInventory();
@@ -272,6 +339,18 @@ public final class SelfTest {
 		dragMenu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(2, 0), ContainerInput.QUICK_CRAFT, player);
 		boolean dragRejected = dragInv.getItem(1).isEmpty() && dragMenu.getCarried().getCount() == 5;
 
+		// драг добавки: нитка ложится только в слот 3
+		FletcherInventory addonDragInv = new FletcherInventory();
+		FletcherMenu addonDragMenu = new FletcherMenu(3, player.getInventory(), addonDragInv, BlockPos.ZERO);
+		addonDragMenu.setCarried(new ItemStack(Items.STRING, 4));
+		addonDragMenu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(0, 0), ContainerInput.QUICK_CRAFT, player);
+		addonDragMenu.clicked(3, AbstractContainerMenu.getQuickcraftMask(1, 0), ContainerInput.QUICK_CRAFT, player);
+		addonDragMenu.clicked(1, AbstractContainerMenu.getQuickcraftMask(1, 0), ContainerInput.QUICK_CRAFT, player);
+		addonDragMenu.clicked(-999, AbstractContainerMenu.getQuickcraftMask(2, 0), ContainerInput.QUICK_CRAFT, player);
+		boolean addonDrag = addonDragInv.getItem(3).getCount() == 4
+			&& addonDragInv.getItem(1).isEmpty()
+			&& addonDragMenu.getCarried().isEmpty();
+
 		// подсказка, двойной клик, CLONE, Q и отрицательный слот — на чистом столе
 		FletcherInventory inventory = new FletcherInventory();
 		FletcherMenu menu = new FletcherMenu(2, player.getInventory(), inventory, BlockPos.ZERO);
@@ -291,6 +370,14 @@ public final class SelfTest {
 		menu.clicked(0, 0, ContainerInput.THROW, player);
 		boolean throwSafe = inventory.getItem(0).isEmpty() && inventory.getPreview(0).getCount() == 1;
 
+		// CLONE и Q по подсказке добавки тоже ничего не выдают
+		inventory.setPreview(3, new ItemStack(Items.GUNPOWDER));
+		menu.setCarried(ItemStack.EMPTY);
+		menu.clicked(3, 0, ContainerInput.CLONE, player);
+		boolean addonClone = menu.getCarried().isEmpty() && inventory.getItem(3).isEmpty();
+		menu.clicked(3, 0, ContainerInput.THROW, player);
+		boolean addonThrowSafe = inventory.getItem(3).isEmpty() && inventory.getPreview(3).getCount() == 1;
+
 		// отрицательный слот с SWAP раньше ронял сервер на slots.get(-1)
 		boolean negativeSafe = true;
 		try {
@@ -301,9 +388,12 @@ public final class SelfTest {
 			LOGGER.error("Fletcher: отрицательный слот не перехвачен", e);
 		}
 
-		boolean ok = swapped && swapRejected && drag && dragRejected && pickAll && clone && throwSafe && negativeSafe;
-		LOGGER.info("Fletcher: клики — F {}, F-чужая {}, драг {}, драг-чужая {}, двойной {}, CLONE {}, Q {}, отрицательный слот {}",
-			ok(swapped), ok(swapRejected), ok(drag), ok(dragRejected), ok(pickAll), ok(clone), ok(throwSafe), ok(negativeSafe));
+		boolean ok = swapped && swapRejected && addonSwapped && addonSwapRejected && drag && dragRejected
+			&& addonDrag && pickAll && clone && throwSafe && addonClone && addonThrowSafe && negativeSafe;
+		LOGGER.info("Fletcher: клики — F {}, F-чужая {}, F-добавка {}, F-добавка-чужая {}, драг {}, драг-чужая {}, "
+				+ "драг-добавка {}, двойной {}, CLONE {}, Q {}, CLONE-добавка {}, Q-добавка {}, отрицательный слот {}",
+			ok(swapped), ok(swapRejected), ok(addonSwapped), ok(addonSwapRejected), ok(drag), ok(dragRejected),
+			ok(addonDrag), ok(pickAll), ok(clone), ok(throwSafe), ok(addonClone), ok(addonThrowSafe), ok(negativeSafe));
 		return ok;
 	}
 
@@ -331,6 +421,35 @@ public final class SelfTest {
 			pierce, FletcherArrows.pierceOf(stack));
 		arrow.discard();
 
+		// добавки: порох — взрыв без пробивания, нитка — гарпун; железный наконечник с ниткой
+		// не ломает блок, иначе гарпуну не за что держаться
+		ItemStack explosive = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET),
+			new ItemStack(Items.GUNPOWDER));
+		ItemStack harpooned = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET),
+			new ItemStack(Items.STRING));
+		ItemStack harpoonIron = FletcherArrows.build(
+			new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_INGOT),
+			new ItemStack(Items.STRING));
+		boolean addonKeys = FletcherArrows.explodes(explosive) && !FletcherArrows.harpoons(explosive)
+			&& FletcherArrows.pierceOf(explosive) == 0
+			&& !FletcherArrows.explodes(harpooned) && FletcherArrows.harpoons(harpooned)
+			&& !FletcherArrows.breaksBlocks(harpoonIron);
+		ItemLore explosiveLore = explosive.get(DataComponents.LORE);
+		ItemLore harpoonLore = harpooned.get(DataComponents.LORE);
+		boolean addonLore = explosiveLore != null && explosiveLore.lines().size() == 3
+			&& ("Взрыв: " + FletcherArrows.EXPLOSION_POWER)
+				.equals(explosiveLore.lines().getFirst().getString())
+			&& harpoonLore != null && harpoonLore.lines().size() == 4
+			&& "Притягивает к блоку".equals(harpoonLore.lines().getLast().getString())
+			&& explosive.get(DataComponents.CUSTOM_NAME).getString().endsWith("· порох");
+		LOGGER.info("Fletcher: добавки — ключи {}, лор {} (порох {} строк, нитка {} строк), "
+				+ "железо с ниткой не ломает {}",
+			ok(addonKeys), ok(addonLore), explosiveLore == null ? "?" : explosiveLore.lines().size(),
+			harpoonLore == null ? "?" : harpoonLore.lines().size(),
+			ok(!FletcherArrows.breaksBlocks(harpoonIron)));
+
 		// стек переписали на обычную стрелу: наша база обязана сняться (иначе 3.0 висит навсегда),
 		// а ванильный урон от «Силы» лука — остаться, поэтому сброс только если мы сами его ставили
 		boolean reset = false;
@@ -351,7 +470,7 @@ public final class SelfTest {
 		}
 		LOGGER.info("Fletcher: сброс на обычную стрелу — drag={}, damage={} (ожид. ванильные {} / {})",
 			reset ? "0.99" : "?", reset ? "2.0" : "?", FletcherArrows.BASE_DRAG, FletcherArrows.BASE_DAMAGE);
-		return ok && reset;
+		return ok && reset && addonKeys && addonLore;
 	}
 
 	/** NBT можно подделать командой или креативом: значения обязаны зажиматься. */
@@ -455,6 +574,13 @@ public final class SelfTest {
 		boolean ironRespectsBorder;
 		boolean ironRespectsAdventure;
 		boolean ironFlight;
+		boolean explodesBlock;
+		boolean explodesEntity;
+		boolean harpoonPulls;
+		boolean harpoonEntityNoPull;
+		boolean harpoonOwnerless;
+		boolean harpoonRange;
+		boolean harpoonKeepsBlock;
 		boolean noEffectInIFrames;
 		boolean ownerlessBurns;
 		boolean noDownPush;
@@ -683,6 +809,95 @@ public final class SelfTest {
 			// только что выпавший ItemEntity не виден ни getAllEntities, ни getEntitiesOfClass;
 			// сам вызов destroyBlock(..., true) — ванильный
 
+			// порох: взрыв по блоку, стрела уничтожается. Блоки ломает всегда, даже при
+			// mobGriefing=false — для этого используется ExplosionInteraction.BLOCK, а не MOB.
+			boolean griefBefore = level.getGameRules().get(GameRules.MOB_GRIEFING);
+			level.getGameRules().set(GameRules.MOB_GRIEFING, false, level.getServer());
+			ItemStack explosiveArrow = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET),
+				new ItemStack(Items.GUNPOWDER));
+			try {
+				level.setBlock(stone, Blocks.DIRT.defaultBlockState(), 3);
+				Arrow bomb = new Arrow(level, 0.0D, 200.0D, 0.0D, explosiveArrow, new ItemStack(Items.BOW));
+				bomb.setOwner(owner);
+				hitBlock(bomb, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+				explodesBlock = level.getBlockState(stone).isAir() && bomb.isRemoved();
+			} finally {
+				level.getGameRules().set(GameRules.MOB_GRIEFING, griefBefore, level.getServer());
+			}
+
+			// порох по сущности: взрыв происходит в точке попадания, стрела уничтожена.
+			// Урон свинье не проверяем: до первого тика секции сущностей скрыты от запросов взрыва,
+			// поэтому взрыв проверяем по блоку под свиньёй (ванильный урон взрыва — не наша логика).
+			level.setBlock(stone, Blocks.DIRT.defaultBlockState(), 3);
+			Pig bombTarget = pig(level, spawned);
+			bombTarget.setPos(1000.5, 201.0, 1000.5);
+			Arrow bombEntity = new Arrow(level, 1000.5D, 201.0D, 1000.5D, explosiveArrow, new ItemStack(Items.BOW));
+			bombEntity.setOwner(owner);
+			hit(bombEntity, bombTarget);
+			explodesEntity = bombEntity.isRemoved() && level.getBlockState(stone).isAir();
+			bombEntity.discard();
+
+			// нитка: попадание в блок тянет владельца к стреле
+			ItemStack harpoonArrow = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_NUGGET),
+				new ItemStack(Items.STRING));
+			Vec3 ownerStart = owner.position();
+			level.setBlock(stone, Blocks.STONE.defaultBlockState(), 3);
+			owner.setPos(1000.5, 201.0, 1006.5);
+			owner.setDeltaMovement(Vec3.ZERO);
+			Arrow grapple = new Arrow(level, 1000.5D, 200.5D, 1000.5D, harpoonArrow, new ItemStack(Items.BOW));
+			grapple.setOwner(owner);
+			hitBlock(grapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			grapple.tick();
+			harpoonPulls = owner.getDeltaMovement().z < -0.1;
+			grapple.discard();
+
+			// попадание в сущность ничего не тянет
+			Pig grappleTarget = pig(level, spawned);
+			grappleTarget.setPos(1000.5, 201.0, 1000.5);
+			owner.setDeltaMovement(Vec3.ZERO);
+			Arrow grappleEntity = new Arrow(level, 0.0D, 201.0, 0.0D, harpoonArrow, new ItemStack(Items.BOW));
+			grappleEntity.setOwner(owner);
+			hit(grappleEntity, grappleTarget);
+			if (!grappleEntity.isRemoved()) {
+				grappleEntity.tick();
+			}
+			harpoonEntityNoPull = owner.getDeltaMovement().lengthSqr() < 1.0E-9;
+			grappleEntity.discard();
+
+			// без владельца и дальше 64 блоков не тянет
+			owner.setDeltaMovement(Vec3.ZERO);
+			Arrow orphanGrapple = new Arrow(level, 0.0D, 200.0D, 0.0D, harpoonArrow, new ItemStack(Items.BOW));
+			hitBlock(orphanGrapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			if (!orphanGrapple.isRemoved()) {
+				orphanGrapple.tick();
+			}
+			harpoonOwnerless = !orphanGrapple.isRemoved();
+			orphanGrapple.discard();
+
+			owner.setPos(1000.5, 201.0, 1065.5);
+			owner.setDeltaMovement(Vec3.ZERO);
+			Arrow farGrapple = new Arrow(level, 1000.5D, 200.5D, 1000.5D, harpoonArrow, new ItemStack(Items.BOW));
+			farGrapple.setOwner(owner);
+			hitBlock(farGrapple, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			farGrapple.tick();
+			harpoonRange = owner.getDeltaMovement().lengthSqr() < 1.0E-9;
+			farGrapple.discard();
+			owner.setPos(ownerStart.x, ownerStart.y, ownerStart.z);
+			owner.setDeltaMovement(Vec3.ZERO);
+
+			// железный наконечник с ниткой не ломает анкер
+			level.setBlock(stone, Blocks.STONE.defaultBlockState(), 3);
+			ItemStack ironHarpoon = FletcherArrows.build(
+				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.IRON_INGOT),
+				new ItemStack(Items.STRING));
+			Arrow keeper = new Arrow(level, 1000.5D, 200.5D, 1000.5D, ironHarpoon, new ItemStack(Items.BOW));
+			keeper.setOwner(owner);
+			hitBlock(keeper, new BlockHitResult(new Vec3(1000.5, 201.0, 1000.5), Direction.UP, stone, false));
+			harpoonKeepsBlock = level.getBlockState(stone).is(Blocks.STONE);
+			keeper.discard();
+
 			// алмазный наконечник теперь добирается до потолка пробивания
 			ItemStack sniper = FletcherArrows.build(
 				new ItemStack(Items.FEATHER), new ItemStack(Items.STICK), new ItemStack(Items.DIAMOND));
@@ -736,17 +951,23 @@ public final class SelfTest {
 				+ "сверху не толкает {}, кремень огонь {}, без владельца огня нет {}, "
 				+ "слиток -50% {}, слиток ломает {}, слиток расходуется {}, неломаемое цело {}, прочное цело {}, "
 				+ "без владельца не ломает {}, граница мира {}, приключение {}, в полёте {}, "
+				+ "порох блок {}, порох сущность {}, гарпун тянет {}, гарпун сущность {}, гарпун без владельца {}, "
+				+ "гарпун 64 {}, гарпун анкер {}, "
 				+ "алмаз пробивание {}, лор {}, без свойств у дешёвых {}, зажим подделки {}, обычная стрела {}",
 			ok(glide), ok(lit), burntTicks, ok(glows), push, vanillaPush, ok(noEffectInIFrames),
 			ok(ownerlessBurns), ok(noDownPush), ok(firePlaced), ok(fireRespectsOwner),
 			ok(ironHalves), ok(ironBreaks), ok(ironSpends), ok(ironSparesUnbreakable),
 			ok(ironSparesDurable), ok(ironRespectsOwner), ok(ironRespectsBorder), ok(ironRespectsAdventure),
-			ok(ironFlight), ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials),
+			ok(ironFlight), ok(explodesBlock), ok(explodesEntity), ok(harpoonPulls), ok(harpoonEntityNoPull),
+			ok(harpoonOwnerless), ok(harpoonRange), ok(harpoonKeepsBlock),
+			ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials),
 			ok(vanillaPlain));
 		return glide && lit && ignites && glows && push > vanillaPush + 0.5 && noEffectInIFrames
 			&& ownerlessBurns && noDownPush && firePlaced && fireRespectsOwner
 			&& ironHalves && ironBreaks && ironSpends && ironSparesUnbreakable && ironSparesDurable
 			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironFlight
+			&& explodesBlock && explodesEntity && harpoonPulls && harpoonEntityNoPull
+			&& harpoonOwnerless && harpoonRange && harpoonKeepsBlock
 			&& diamondPierce && loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
 	}
 

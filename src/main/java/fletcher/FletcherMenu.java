@@ -39,9 +39,9 @@ import java.util.List;
  * слот нельзя ни положить, ни забрать ванильным кликом, выдачу делает {@link #clicked}.
  */
 public class FletcherMenu extends HopperMenu {
-	private static final int SLOT_LOCKED = FletcherInventory.SLOT_LOCKED;
+	private static final int SLOT_ADDON = FletcherInventory.SLOT_ADDON;
 	private static final int SLOT_OUTPUT = FletcherInventory.SLOT_OUTPUT;
-	private static final int MATERIAL_SLOTS = FletcherInventory.SLOT_MATERIALS;
+	private static final int INPUT_SLOTS = FletcherInventory.SLOT_INPUTS;
 	private static final int INVENTORY_START = 5;
 	private static final int PREVIEW_INTERVAL = 60;
 
@@ -55,11 +55,16 @@ public class FletcherMenu extends HopperMenu {
 		this.fletcher = inventory;
 		this.tablePos = tablePos;
 
-		for (int i = 0; i < MATERIAL_SLOTS; i++) {
-			this.slots.set(i, new PreviewSlot(i, 44 + i * 18, 20));
+		for (int i = 0; i < INPUT_SLOTS; i++) {
+			PreviewSlot slot = new PreviewSlot(i, 44 + i * 18, 20);
+			// заменяем слот после конструктора меню: index иначе останется 0, и одиночный драг
+			// сработает по чужому слоту (это ломало драг добавки в slot 3)
+			slot.index = i;
+			this.slots.set(i, slot);
 		}
-		this.slots.set(SLOT_LOCKED, new LockedSlot(inventory, SLOT_LOCKED, 98, 20));
-		this.slots.set(SLOT_OUTPUT, new OutputSlot(inventory, SLOT_OUTPUT, 116, 20));
+		OutputSlot output = new OutputSlot(inventory, SLOT_OUTPUT, 116, 20);
+		output.index = SLOT_OUTPUT;
+		this.slots.set(SLOT_OUTPUT, output);
 
 		refreshPreviews();
 	}
@@ -75,9 +80,14 @@ public class FletcherMenu extends HopperMenu {
 	}
 
 	private void refreshPreviews() {
-		for (int i = 0; i < MATERIAL_SLOTS; i++) {
+		for (int i = 0; i < INPUT_SLOTS; i++) {
 			if (!this.fletcher.getItem(i).isEmpty()) {
 				this.fletcher.clearPreview(i);
+				continue;
+			}
+			if (i == SLOT_ADDON) {
+				Item item = pick(FletcherArrows.addonPool(), this.fletcher.getPreview(i));
+				this.fletcher.setPreview(i, hint(item, "addon", "добавка"));
 				continue;
 			}
 			FletcherArrows.Role role = FletcherArrows.roleForSlot(i);
@@ -98,16 +108,24 @@ public class FletcherMenu extends HopperMenu {
 
 	/**
 	 * Подсказка подписана ролью в лоре: имя предмета остаётся, слот объяснён второй строкой.
-	 * Третья строка — особое свойство, если у материала оно есть: у «дешёвых» (бумага, бамбук) её нет.
+	 * Третья строка — особое свойство или эффект добавки, если он есть.
 	 */
 	private static ItemStack hint(Item item, FletcherArrows.Role role) {
+		return hint(item, role.key(), role.label());
+	}
+
+	private static ItemStack hint(Item item, String key, String label) {
 		ItemStack stack = new ItemStack(item);
 		List<Component> lore = new ArrayList<>();
-		lore.add(Component.translatableWithFallback("fletcher.hint." + role.key(), "Сюда: " + role.label())
+		lore.add(Component.translatableWithFallback("fletcher.hint." + key, "Сюда: " + label)
 			.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
 		String special = FletcherArrows.specialLabelOf(stack);
 		if (!special.isEmpty()) {
 			lore.add(Component.literal(special).withStyle(ChatFormatting.GOLD));
+		}
+		FletcherArrows.Addon addon = FletcherArrows.addonOf(stack);
+		if (!addon.isEmpty()) {
+			lore.add(Component.literal(addon.effect()).withStyle(ChatFormatting.GOLD));
 		}
 		stack.set(DataComponents.LORE, new ItemLore(lore));
 		return stack;
@@ -134,10 +152,7 @@ public class FletcherMenu extends HopperMenu {
 			}
 			return;
 		}
-		if (slotId == SLOT_LOCKED) {
-			return;
-		}
-		if (slotId < MATERIAL_SLOTS && this.fletcher.getItem(slotId).isEmpty()) {
+		if (slotId < INPUT_SLOTS && this.fletcher.getItem(slotId).isEmpty()) {
 			if (input == ContainerInput.SWAP) {
 				// в слоте пусто, но показывается подсказка: ваниль считает слот занятым и не обменивает
 				placeFromHotbar(slotId, button, player);
@@ -155,9 +170,6 @@ public class FletcherMenu extends HopperMenu {
 	public ItemStack quickMoveStack(Player player, int index) {
 		if (index == SLOT_OUTPUT) {
 			return takeOutput(player, true);
-		}
-		if (index == SLOT_LOCKED) {
-			return ItemStack.EMPTY;
 		}
 
 		if (index >= INVENTORY_START) {
@@ -215,13 +227,19 @@ public class FletcherMenu extends HopperMenu {
 		}
 	}
 
-	/** Цель для shift-click: единственный слот роли, с доливом в существующую стопку. */
+	/** Цель для shift-click: слот роли или добавки, с доливом в существующую стопку. */
 	private int findMaterialTarget(ItemStack stack) {
+		if (FletcherArrows.isAddon(stack)) {
+			return targetFor(SLOT_ADDON, stack);
+		}
 		FletcherArrows.Role role = FletcherArrows.roleOf(stack);
 		if (role == null) {
 			return -1;
 		}
-		int slot = role.slot();
+		return targetFor(role.slot(), stack);
+	}
+
+	private int targetFor(int slot, ItemStack stack) {
 		ItemStack current = this.fletcher.getItem(slot);
 		if (current.isEmpty()) {
 			return slot;
@@ -240,7 +258,14 @@ public class FletcherMenu extends HopperMenu {
 		}
 		Inventory inventory = player.getInventory();
 		ItemStack source = inventory.getItem(button);
-		if (source.isEmpty() || FletcherArrows.roleOf(source) != FletcherArrows.roleForSlot(slot)) {
+		if (source.isEmpty()) {
+			return;
+		}
+		if (slot == SLOT_ADDON) {
+			if (!FletcherArrows.isAddon(source)) {
+				return;
+			}
+		} else if (FletcherArrows.roleOf(source) != FletcherArrows.roleForSlot(slot)) {
 			return;
 		}
 		int max = this.fletcher.getMaxStackSize(source);
@@ -288,7 +313,7 @@ public class FletcherMenu extends HopperMenu {
 	@Override
 	public void removed(Player player) {
 		super.removed(player);
-		for (int i = 0; i < MATERIAL_SLOTS; i++) {
+		for (int i = 0; i < INPUT_SLOTS; i++) {
 			ItemStack stack = this.fletcher.getItem(i);
 			if (stack.isEmpty()) {
 				continue;
@@ -329,7 +354,11 @@ public class FletcherMenu extends HopperMenu {
 
 		@Override
 		public boolean mayPlace(ItemStack stack) {
-			return FletcherArrows.roleOf(stack) == FletcherArrows.roleForSlot(this.getContainerSlot());
+			int slot = this.getContainerSlot();
+			if (slot == FletcherInventory.SLOT_ADDON) {
+				return FletcherArrows.isAddon(stack);
+			}
+			return FletcherArrows.roleOf(stack) == FletcherArrows.roleForSlot(slot);
 		}
 
 		@Override
@@ -340,27 +369,6 @@ public class FletcherMenu extends HopperMenu {
 		@Override
 		public boolean allowModification(Player player) {
 			return this.mayPickup(player);
-		}
-	}
-
-	private static class LockedSlot extends Slot {
-		LockedSlot(FletcherInventory inventory, int slot, int x, int y) {
-			super(inventory, slot, x, y);
-		}
-
-		@Override
-		public boolean mayPlace(ItemStack stack) {
-			return false;
-		}
-
-		@Override
-		public boolean mayPickup(Player player) {
-			return false;
-		}
-
-		@Override
-		public boolean allowModification(Player player) {
-			return false;
 		}
 	}
 
