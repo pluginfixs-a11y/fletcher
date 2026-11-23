@@ -117,7 +117,8 @@ respawn anchor, reinforced deepslate, ender chest, everything with a negative de
 barrier, command and structure blocks) and anything in `minecraft:needs_diamond_tool`. Those just
 stick like a normal arrow and are not spent. The break goes through Fabric's
 `PlayerBlockBreakEvents.BEFORE`/`AFTER`, so a protection mod can veto it, and a broken bee nest
-releases its bees and fires the nest-destroyed trigger like vanilla mining. Drops are the block's own
+releases its bees, updates its neighbours, angers nearby bees and fires the nest-destroyed trigger
+like vanilla mining. Drops are the block's own
 (`destroyBlock(..., true)`), so an ore still drops its item; a block without a drop table simply
 vanishes. A few per-block `playerDestroy` overrides do not run: ice disappears instead of melting to
 water, a turtle egg cluster vanishes whole instead of losing one egg, and the other half of a double
@@ -293,8 +294,10 @@ arrows; a quiver in the main inventory is ignored. The crossbow path is covered 
 `tryLoadProjectiles` charges a real crossbow from the quiver, spends one arrow, keeps the fletcher tag
 and leaves no source marker on the charged stack; a Multishot crossbow loads three projectiles from
 the same single arrow and marks only the extra two `INTANGIBLE_PROJECTILE`. Destroying the quiver
-item with lava damage runs the real `BundleItem.onDestroyed`, which must empty the `container`
-component and leave exactly one dropped stack of the five arrows in the world.
+item with lava damage runs the real `BundleItem.onDestroyed`, which must empty the container
+component; the extracted five-arrow stack is checked separately, because freshly spawned `ItemEntity`s
+are not visible to entity queries before the test server has ticked. The drop itself is vanilla
+`ItemUtils.onContainerDestroyed`.
 
 ## Install
 

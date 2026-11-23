@@ -11,6 +11,8 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.EnchantmentTags;
+import net.minecraft.util.Util;
+import net.minecraft.world.Containers;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
@@ -18,8 +20,10 @@ import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.animal.bee.Bee;
 import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.entity.monster.piglin.PiglinAi;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.schedule.Activity;
 import net.minecraft.world.item.ItemStack;
@@ -42,6 +46,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.List;
 
 /**
  * Свойства собранной стрелы применяются на сервере: состав стрелы лежит в её стеке
@@ -305,17 +311,39 @@ public abstract class AbstractArrowMixin {
 				}
 			}
 		}
-		// пчёлы: Block#playerDestroy выпускает их и срабатывает достижение, но destroyBlock — нет
+		// пчёлы: Block#playerDestroy выпускает их, злит соседних пчёл и обновляет соседей, но
+		// destroyBlock этого не делает — повторяем ванильную последовательность
 		if (level.destroyBlock(pos, true, self, 512)) {
 			if (blockEntity instanceof BeehiveBlockEntity hive) {
 				ItemStack tool = self.getPickupItemStackOrigin();
 				if (!EnchantmentHelper.hasTag(tool, EnchantmentTags.PREVENTS_BEE_SPAWNS_WHEN_MINING)) {
 					hive.emptyAllLivingFromHive(owner, state, BeehiveBlockEntity.BeeReleaseStatus.EMERGENCY);
+					Containers.updateNeighboursAfterDestroy(state, level, pos);
+					fletcher$angerNearbyBees(level, pos);
 				}
 				CriteriaTriggers.BEE_NEST_DESTROYED.trigger(owner, state, tool, hive.getOccupantCount());
 			}
 			PlayerBlockBreakEvents.AFTER.invoker().afterBlockBreak(level, owner, pos, state, blockEntity);
 			self.discard();
+		}
+	}
+
+	/** Копия ванильного {@code BeehiveBlock#angerNearbyBees}: разорённый стрелой улей злит пчёл. */
+	@Unique
+	private static void fletcher$angerNearbyBees(ServerLevel level, BlockPos pos) {
+		AABB area = new AABB(pos).inflate(8.0, 6.0, 8.0);
+		List<Bee> bees = level.getEntitiesOfClass(Bee.class, area);
+		if (bees.isEmpty()) {
+			return;
+		}
+		List<Player> players = level.getEntitiesOfClass(Player.class, area);
+		if (players.isEmpty()) {
+			return;
+		}
+		for (Bee bee : bees) {
+			if (bee.getTarget() == null) {
+				bee.setTarget(Util.getRandom(players, level.getRandom()));
+			}
 		}
 	}
 

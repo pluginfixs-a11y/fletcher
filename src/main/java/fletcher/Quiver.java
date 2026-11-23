@@ -96,6 +96,23 @@ public final class Quiver {
 		return list;
 	}
 
+	/**
+	 * Забрать содержимое при уничтожении предмета: вернуть непустые стаки и сразу очистить
+	 * {@code CONTAINER}, чтобы предмет не уехал вместе с уже выброшенными копиями. Вынесено из
+	 * миксина, чтобы самопроверка проверяла перенос без запросов к только что созданным ItemEntity.
+	 */
+	public static List<ItemStack> takeContents(ItemStack quiver) {
+		NonNullList<ItemStack> items = contents(quiver);
+		quiver.set(DataComponents.CONTAINER, ItemContainerContents.EMPTY);
+		List<ItemStack> nonEmpty = new ArrayList<>();
+		for (ItemStack stack : items) {
+			if (!stack.isEmpty()) {
+				nonEmpty.add(stack);
+			}
+		}
+		return nonEmpty;
+	}
+
 	/** Индекс активного слота, всегда 0..{@link #SLOTS}-1. */
 	public static int active(ItemStack quiver) {
 		CompoundTag tag = rootOf(quiver);

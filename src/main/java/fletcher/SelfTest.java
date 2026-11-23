@@ -45,7 +45,6 @@ import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.core.Direction;
 import org.slf4j.Logger;
 
@@ -620,6 +619,7 @@ public final class SelfTest {
 		boolean ironRespectsBorder;
 		boolean ironRespectsAdventure;
 		boolean ironRespectsVeto;
+		boolean beeNestBreaks;
 		boolean ironFlight;
 		boolean explodesBlock;
 		boolean explodesEntity;
@@ -845,6 +845,17 @@ public final class SelfTest {
 			vetoArrow.discard();
 			level.setBlock(vetoPos, Blocks.AIR.defaultBlockState(), 3);
 
+			// улей: путь с BeehiveBlockEntity (выпуск пчёл, соседи, злость, достижение) не должен
+			// падать; пчёл в тестовом улье нет, поэтому проверяем сам проход и разрушение блока
+			BlockPos nestPos = new BlockPos(1004, 200, 1000);
+			level.setBlock(nestPos, Blocks.BEE_NEST.defaultBlockState(), 3);
+			Arrow nestArrow = new Arrow(level, 0.0D, 200.0D, 0.0D, crushing, new ItemStack(Items.BOW));
+			nestArrow.setOwner(owner);
+			hitBlock(nestArrow, new BlockHitResult(new Vec3(1004.5, 201.0, 1000.5), Direction.UP, nestPos, false));
+			beeNestBreaks = level.getBlockState(nestPos).isAir() && nestArrow.isRemoved();
+			nestArrow.discard();
+			level.setBlock(nestPos, Blocks.AIR.defaultBlockState(), 3);
+
 			// настоящий полёт: проверяется не только прямой вызов onHitBlock, но и то, что стрела
 			// долетает сама, ломает блок и исчезает в тике попадания. Столб над целью чистим:
 			// на тестовом мире с высоким рельефом стрела иначе воткнулась бы в него.
@@ -1018,20 +1029,21 @@ public final class SelfTest {
 				+ "кость толчок {} (ванильная {}), кадры неуязвимости {}, без владельца поджигает {}, "
 				+ "сверху не толкает {}, кремень огонь {}, без владельца огня нет {}, "
 				+ "слиток -50% {}, слиток ломает {}, слиток расходуется {}, неломаемое цело {}, прочное цело {}, "
-				+ "без владельца не ломает {}, граница мира {}, приключение {}, вето {}, в полёте {}, "
+				+ "без владельца не ломает {}, граница мира {}, приключение {}, вето {}, улей {}, в полёте {}, "
 				+ "порох блок {}, порох сущность {}, порох полёт {}, огненный взрыв {}, "
 				+ "алмаз пробивание {}, лор {}, без свойств у дешёвых {}, зажим подделки {}, обычная стрела {}",
 			ok(glide), ok(lit), burntTicks, ok(glows), push, vanillaPush, ok(noEffectInIFrames),
 			ok(ownerlessBurns), ok(noDownPush), ok(firePlaced), ok(fireRespectsOwner),
 			ok(ironHalves), ok(ironBreaks), ok(ironSpends), ok(ironSparesUnbreakable),
 			ok(ironSparesDurable), ok(ironRespectsOwner), ok(ironRespectsBorder), ok(ironRespectsAdventure),
-			ok(ironRespectsVeto), ok(ironFlight), ok(explodesBlock), ok(explodesEntity), ok(explodesFlight), ok(explodesFireWire),
+			ok(ironRespectsVeto), ok(beeNestBreaks), ok(ironFlight), ok(explodesBlock), ok(explodesEntity), ok(explodesFlight), ok(explodesFireWire),
 			ok(diamondPierce), ok(loreLines), ok(noSpecialForCheap), ok(clampedSpecials),
 			ok(vanillaPlain));
 		return glide && lit && ignites && glows && push > vanillaPush + 0.5 && noEffectInIFrames
 			&& ownerlessBurns && noDownPush && firePlaced && fireRespectsOwner
 			&& ironHalves && ironBreaks && ironSpends && ironSparesUnbreakable && ironSparesDurable
-			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironRespectsVeto && ironFlight
+			&& ironRespectsOwner && ironRespectsBorder && ironRespectsAdventure && ironRespectsVeto
+			&& beeNestBreaks && ironFlight
 			&& explodesBlock && explodesEntity && explodesFlight && explodesFireWire
 			&& diamondPierce && loreLines && noSpecialForCheap && clampedSpecials && vanillaPlain;
 	}
@@ -1205,21 +1217,28 @@ public final class SelfTest {
 			&& multi.itemCopies().get(2).get(DataComponents.INTANGIBLE_PROJECTILE) != null
 			&& Quiver.contents(quiver).get(0).isEmpty();
 
-		// уничтожение (лава/огонь/кактус): стрелы должны вылететь, а не исчезнуть вместе с колчаном
+		// уничтожение (лава/огонь/кактус): CONTAINER очищается, содержимое уходит в ItemUtils.
+		// Свежие ItemEntity в этом прогоне ещё не видны запросам (до онбординга секций), поэтому
+		// проверяем очистку при уничтожении и извлечение содержимого отдельно, а не ловим дроп
+		// через getEntitiesOfClass.
 		ItemStack doomed = Quiver.create();
 		QuiverInventory doomedInventory = new QuiverInventory(doomed);
 		doomedInventory.setItem(0, fletcherArrow.copyWithCount(5));
 		ItemEntity doomedEntity = new ItemEntity(level, 0.5D, 128.0D, 0.5D, doomed);
 		level.addFreshEntity(doomedEntity);
 		boolean killed = doomedEntity.hurtServer(level, level.damageSources().lava(), 10.0F);
-		AABB dropArea = new AABB(0.0D, 127.0D, 0.0D, 1.0D, 129.0D, 1.0D);
-		List<ItemEntity> droppedArrows = level.getEntitiesOfClass(ItemEntity.class, dropArea,
-			entity -> entity != doomedEntity && entity.getItem().is(Items.ARROW)
-				&& entity.getItem().getCount() == 5);
-		boolean destruction = killed && doomedEntity.isRemoved()
-			&& droppedArrows.size() == 1
+		boolean destructed = killed && doomedEntity.isRemoved()
 			&& Quiver.contents(doomedEntity.getItem()).stream().allMatch(ItemStack::isEmpty);
-		droppedArrows.forEach(Entity::discard);
+
+		ItemStack doomedSecond = Quiver.create();
+		new QuiverInventory(doomedSecond).setItem(0, fletcherArrow.copyWithCount(5));
+		List<ItemStack> dropped = Quiver.takeContents(doomedSecond);
+		List<ItemStack> droppedAgain = Quiver.takeContents(doomedSecond);
+		boolean destruction = destructed && dropped.size() == 1
+			&& dropped.get(0).getCount() == 5
+			&& dropped.get(0).is(Items.ARROW)
+			&& droppedAgain.isEmpty()
+			&& Quiver.contents(doomedSecond).stream().allMatch(ItemStack::isEmpty);
 
 		boolean ok = created && persisted && arrowsOnly && bundleStoreBlocked && selected && picked && returned
 			&& shiftOut && dragIn && swapIn && dragJunk
