@@ -63,7 +63,11 @@ public final class Quiver {
 			return false;
 		}
 		BundleContents contents = stack.get(DataComponents.BUNDLE_CONTENTS);
-		return contents == null || contents.isEmpty();
+		if (contents != null && !contents.isEmpty()) {
+			return false;
+		}
+		ItemContainerContents stored = stack.get(DataComponents.CONTAINER);
+		return stored == null || !stored.nonEmptyItemCopyStream().findAny().isPresent();
 	}
 
 	/** Новый пустой колчан: всегда обычный мешок, чтобы ресурспаку хватило одной модели. */
@@ -177,6 +181,9 @@ public final class Quiver {
 	 */
 	public static void consumeAt(Player player, int hotbarSlot, int amount) {
 		if (amount <= 0) {
+			return;
+		}
+		if (hotbarSlot < 0 || hotbarSlot > 8) {
 			return;
 		}
 		ItemStack quiver = player.getInventory().getItem(hotbarSlot);

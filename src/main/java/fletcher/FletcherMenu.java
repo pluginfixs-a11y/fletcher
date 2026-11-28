@@ -47,6 +47,7 @@ public class FletcherMenu extends HopperMenu {
 
 	private final FletcherInventory fletcher;
 	private final BlockPos tablePos;
+	private final ServerLevel level;
 	private final RandomSource random = RandomSource.create();
 	private int previewTimer;
 
@@ -54,6 +55,7 @@ public class FletcherMenu extends HopperMenu {
 		super(syncId, playerInventory, inventory);
 		this.fletcher = inventory;
 		this.tablePos = tablePos;
+		this.level = playerInventory.player.level() instanceof ServerLevel serverLevel ? serverLevel : null;
 
 		for (int i = 0; i < INPUT_SLOTS; i++) {
 			PreviewSlot slot = new PreviewSlot(i, 44 + i * 18, 20);
@@ -330,7 +332,8 @@ public class FletcherMenu extends HopperMenu {
 
 	@Override
 	public boolean stillValid(Player player) {
-		return player.level().getBlockState(this.tablePos).is(Blocks.FLETCHING_TABLE)
+		return player.level() == this.level
+			&& player.level().getBlockState(this.tablePos).is(Blocks.FLETCHING_TABLE)
 			&& player.isWithinBlockInteractionRange(this.tablePos, 4.0);
 	}
 

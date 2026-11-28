@@ -74,6 +74,9 @@ public class FletcherInventory implements Container {
 		}
 		ItemStack stack = items.get(slot);
 		ItemStack taken = stack.split(amount);
+		if (stack.isEmpty()) {
+			items.set(slot, ItemStack.EMPTY);
+		}
 		if (!taken.isEmpty()) {
 			refreshOutput();
 		}
